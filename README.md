@@ -42,7 +42,7 @@ import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
 
 This package comes with **two** different main classes you can instantiate. Choose the one that fits your needs.
 
-#### Metrics Connection
+### Metrics Connection
 
 Use this if you only intend to make requests to `unauthenticated` routes. All constructor params are optional.
 
@@ -60,7 +60,7 @@ connection.onServerStatusChange.listen(event => {/* Do something */});
 final response = await connection.action(path: '/status', action: 'core:status', method: r'GET');
 ```
 
-#### Authenticated Metrics Connection
+### Authenticated Metrics Connection
 
 Use this if you only intend to make requests to `authenticated` routes. All constructor params are optional.
 
@@ -91,7 +91,7 @@ authenticatedConnection.updateTokens(authenticatedResponse);
 
 ## Additional information
 
-#### Errors
+### Errors
 
 ```dart
 class MetricsApiError implements Exception {
@@ -109,7 +109,7 @@ class MetricsApiError implements Exception {
 }
 ```
 
-#### State
+### State
 
 ```dart
 enum ConnectionState { disconnected, connected }
