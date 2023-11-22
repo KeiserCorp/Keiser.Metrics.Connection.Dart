@@ -62,7 +62,7 @@ final response = await connection.action(path: '/status', action: 'core:status',
 
 ### Authenticated Metrics Connection
 
-Use this if you only intend to make requests to `authenticated` routes. All constructor params are optional.
+Use this if you intend to make requests to `authenticated` routes. Again, all constructor params are optional.
 
 ```dart
 final authenticatedConnection = AuthenticatedMetricsConnection(
@@ -100,7 +100,7 @@ class MetricsApiError implements Exception {
 
   String? explanation;
   int code; // internal api codes
-  int status; // standard server status codes
+  int status; // standard server status codes (e.g. 200, 500, etc)
   String name; // e.g. "TokenInvalid", "UnauthorizedResource"
   String message;
 
@@ -109,7 +109,7 @@ class MetricsApiError implements Exception {
 }
 ```
 
-### State
+### Events
 
 ```dart
 enum ConnectionState { disconnected, connected }
