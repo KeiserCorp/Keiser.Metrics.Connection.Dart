@@ -2,8 +2,12 @@ part of keiser_metrics_connection;
 
 class MetricsConnection {
   MetricsConnection({
-    required this.restEndpoint,
-    required this.socketEndpoint,
+    this.restEndpoint = defaultRestEndpoint,
+    this.socketEndpoint = defaultSocketEndpoint,
+    this.shouldEnableWebSocket = defaultShouldEnableWebSocket,
+    this.socketTimeout = defaultSocketTimeout,
+    this.concurrentRequestLimit = defaultConcurrentRequestLimit,
+    this.requestRetryLimit = defaultRequestRetryLimit,
   }) {
     open();
   }
@@ -22,15 +26,19 @@ class MetricsConnection {
   final StreamController<MetricsApiError> _onError =
       StreamController<MetricsApiError>.broadcast();
 
-  late String restEndpoint;
-  late String socketEndpoint;
+  final String restEndpoint;
+  final String socketEndpoint;
+  final bool shouldEnableWebSocket;
+  final int concurrentRequestLimit;
+  final int requestRetryLimit;
+  final Duration socketTimeout;
+
   io_web_socket_channel.WebSocketChannel? _socket;
   Dio? _dio;
   int _lastMessageId = 0;
   int _socketRetryAttempts = 0;
   bool _shouldRetrySocketConnection = true;
   bool _isDioAvailable = false;
-  bool _shouldEnableWebSocket = true;
   AuthenticationStatus authenticationStatus = AuthenticationStatus.unknown;
 
   ConnectionState _socketConnectionState = ConnectionState.disconnected;
@@ -53,17 +61,14 @@ class MetricsConnection {
   int _activeRequest = 0;
   bool _isOpen = false;
 
-  void open({
-    bool persistConnection = true,
-  }) {
+  void open() {
     if (_isOpen) {
       return;
     }
     _isOpen = true;
-    _shouldEnableWebSocket = persistConnection;
     _openRest();
 
-    if (_shouldEnableWebSocket) {
+    if (shouldEnableWebSocket) {
       _openSocket();
     }
   }
@@ -262,7 +267,7 @@ class MetricsConnection {
           _setServerStatus(ServerState.offline);
           throw UnexpectedError(message: 'Internet is or Server is offline');
         },
-        maxAttempts: shouldRetry ? 5 : 0,
+        maxAttempts: shouldRetry ? requestRetryLimit : 0,
         maxDelay: const Duration(seconds: 5),
         retryIf: (e) => e is! MetricsApiError && e is! UnexpectedError,
       );
@@ -307,7 +312,7 @@ class MetricsConnection {
       Map<String, dynamic> queryParameters = const {},
       Map<String, dynamic> socketParameters = const {},
       Map<String, dynamic>? bodyParameters}) async {
-    if (_activeRequest < 5) {
+    if (_activeRequest < concurrentRequestLimit) {
       _activeRequest++;
       try {
         final res = await executeRequest(path, action, method, shouldRetry,
@@ -442,13 +447,21 @@ class MetricsConnection {
   }
 }
 
-class AuthenticatedConnectionHandler extends ConnectionHandler {
-  AuthenticatedConnectionHandler({
-    required String restEndpoint,
-    required String socketEndpoint,
+class AuthenticatedMetricsConnection extends ConnectionHandler {
+  AuthenticatedMetricsConnection({
+    String restEndpoint = defaultRestEndpoint,
+    String socketEndpoint = defaultSocketEndpoint,
+    bool shouldEnableWebSocket = defaultShouldEnableWebSocket,
+    Duration socketTimeout = defaultSocketTimeout,
+    int concurrentRequestLimit = defaultConcurrentRequestLimit,
+    int requestRetryLimit = defaultRequestRetryLimit,
   }) : super(
           restEndpoint: restEndpoint,
           socketEndpoint: socketEndpoint,
+          shouldEnableWebSocket: shouldEnableWebSocket,
+          socketTimeout: socketTimeout,
+          concurrentRequestLimit: concurrentRequestLimit,
+          requestRetryLimit: requestRetryLimit,
         );
 
   late String _accessToken;

@@ -45,11 +45,19 @@ class SocketPushMessage {
 
 abstract class ConnectionHandler {
   ConnectionHandler({
-    required String restEndpoint,
-    required String socketEndpoint,
+    String restEndpoint = defaultRestEndpoint,
+    String socketEndpoint = defaultSocketEndpoint,
+    bool shouldEnableWebSocket = defaultShouldEnableWebSocket,
+    Duration socketTimeout = defaultSocketTimeout,
+    int concurrentRequestLimit = defaultConcurrentRequestLimit,
+    int requestRetryLimit = defaultRequestRetryLimit,
   }) : metricsConnection = MetricsConnection(
           restEndpoint: restEndpoint,
           socketEndpoint: socketEndpoint,
+          shouldEnableWebSocket: shouldEnableWebSocket,
+          socketTimeout: socketTimeout,
+          concurrentRequestLimit: concurrentRequestLimit,
+          requestRetryLimit: requestRetryLimit,
         );
   final MetricsConnection metricsConnection;
 }
