@@ -40,21 +40,21 @@ class MetricsConnection {
   StreamSubscription? _socketSubscription;
 
   // state
-  AuthenticationStatus _authenticationStatus = AuthenticationStatus.unknown;
+  AuthenticationState _authenticationStatus = AuthenticationState.unknown;
   ConnectionState _socketConnectionState = ConnectionState.disconnected;
   ServerState _serverStatus = ServerState.offline;
   bool get isSocketConnected =>
       _socketConnectionState == ConnectionState.connected;
 
   // streams
-  final StreamController<ConnectionStateEvent> _onConnectionChange =
-      StreamController<ConnectionStateEvent>.broadcast();
+  final StreamController<ConnectionState> _onConnectionChange =
+      StreamController<ConnectionState>.broadcast();
 
   final StreamController<ServerState> _onServerStatusChange =
       StreamController<ServerState>.broadcast();
 
-  final StreamController<AuthenticationStatus> _onAuthenticationStatusChange =
-      StreamController<AuthenticationStatus>.broadcast();
+  final StreamController<AuthenticationState> _onAuthenticationStatusChange =
+      StreamController<AuthenticationState>.broadcast();
 
   final StreamController<MetricsApiError> _onError =
       StreamController<MetricsApiError>.broadcast();
@@ -63,12 +63,12 @@ class MetricsConnection {
       StreamController<RefreshTokenChangeEvent>.broadcast();
 
   // public getters
-  Stream<ConnectionStateEvent> get onConnectionChange =>
+  Stream<ConnectionState> get onConnectionStatusChange =>
       _onConnectionChange.stream;
 
   Stream<ServerState> get onServerStatusChange => _onServerStatusChange.stream;
 
-  Stream<AuthenticationStatus> get onAuthenticationStatusChanged =>
+  Stream<AuthenticationState> get onAuthenticationStatusChanged =>
       _onAuthenticationStatusChange.stream;
 
   Stream<MetricsApiError> get onError => _onError.stream;
@@ -182,8 +182,7 @@ class MetricsConnection {
     }
 
     _socketConnectionState = connectionState;
-    _onConnectionChange
-        .add(ConnectionStateEvent(connectionState: _socketConnectionState));
+    _onConnectionChange.add(_socketConnectionState);
   }
 
   void _setServerStatus(ServerState status) {
@@ -193,7 +192,7 @@ class MetricsConnection {
     }
   }
 
-  void _setAuthStatus(AuthenticationStatus status) {
+  void _setAuthStatus(AuthenticationState status) {
     if (_authenticationStatus != status) {
       _authenticationStatus = status;
       _onAuthenticationStatusChange.add(status);
@@ -367,7 +366,7 @@ class MetricsConnection {
   ResponseMessage _verifyAuthentication(ResponseMessage response) {
     final res = response.data as Map<String, dynamic>;
     if (res['accessToken'] != null) {
-      _setAuthStatus(AuthenticationStatus.authenticated);
+      _setAuthStatus(AuthenticationState.authenticated);
     }
 
     return response;
@@ -563,7 +562,7 @@ class MetricsConnection {
             // if blacklisted refresh token
             if (error.code == 615) {
               _setAuthStatus(
-                AuthenticationStatus.unauthenticated,
+                AuthenticationState.unauthenticated,
               );
             }
             rethrow;
@@ -575,7 +574,7 @@ class MetricsConnection {
         } else {
           // invalid token and no refresh token
           _setAuthStatus(
-            AuthenticationStatus.unauthenticated,
+            AuthenticationState.unauthenticated,
           );
           rethrow;
         }
