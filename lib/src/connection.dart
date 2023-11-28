@@ -68,15 +68,16 @@ class MetricsConnection {
 
   Stream<ServerState> get onServerStatusChange => _onServerStatusChange.stream;
 
-  Stream<AuthenticationState> get onAuthenticationStatusChanged =>
+  Stream<AuthenticationState> get onAuthenticationStatusChange =>
       _onAuthenticationStatusChange.stream;
+
+  Stream<RefreshTokenChangeEvent> get onRefreshTokenChange =>
+      _onRefreshChange.stream;
 
   Stream<MetricsApiError> get onError => _onError.stream;
 
   SessionToken? get decodedAccesstoken =>
       _accessToken != null ? decodeJwt(_accessToken!) : null;
-
-  Stream<RefreshTokenChangeEvent> get onRefreshToken => _onRefreshChange.stream;
 
   void open() {
     if (_isOpen) {
@@ -235,7 +236,7 @@ class MetricsConnection {
   void _requestServerHealth() async {
     try {
       // TODO - change this to core:status when/if apollo server is updated
-      await enqueue(
+      await _enqueue(
         path: '/status',
         action: 'status',
         method: r'GET',
@@ -259,14 +260,15 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> executeRequest(
-      String path,
-      String action,
-      String method,
-      bool shouldRetry,
-      Map<String, dynamic> queryParameters,
-      Map<String, dynamic> socketParameters,
-      Map<String, dynamic>? bodyParameters) async {
+  Future<ResponseMessage> _executeRequest(
+    String path,
+    String action,
+    String method,
+    bool shouldRetry,
+    Map<String, dynamic> queryParameters,
+    Map<String, dynamic> socketParameters,
+    Map<String, dynamic>? bodyParameters,
+  ) async {
     ResponseMessage response;
     try {
       response = await retry(
@@ -308,13 +310,13 @@ class MetricsConnection {
     return response;
   }
 
-  void dequeue() async {
+  void _dequeue() async {
     if (_requestQueue.isEmpty) {
       return;
     }
     final request = _requestQueue.removeAt(0);
     try {
-      final response = await executeRequest(
+      final response = await _executeRequest(
           request.path,
           request.action,
           request.method,
@@ -328,7 +330,7 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> enqueue({
+  Future<ResponseMessage> _enqueue({
     required String path,
     required String action,
     required String method,
@@ -340,12 +342,12 @@ class MetricsConnection {
     if (_activeRequest < concurrentRequestLimit) {
       _activeRequest++;
       try {
-        final res = await executeRequest(path, action, method, shouldRetry,
+        final res = await _executeRequest(path, action, method, shouldRetry,
             queryParameters, socketParameters, bodyParameters);
         return res;
       } finally {
         _activeRequest--;
-        dequeue();
+        _dequeue();
       }
     }
     final completer = Completer<ResponseMessage>();
@@ -364,8 +366,9 @@ class MetricsConnection {
   }
 
   ResponseMessage _verifyAuthentication(ResponseMessage response) {
-    final res = response.data as Map<String, dynamic>;
-    if (res['accessToken'] != null) {
+    final data = response.data! as Map<String, dynamic>;
+    if (data['accessToken'] != null) {
+      _updateTokens(AuthenticatedResponse.fromMap(data));
       _setAuthStatus(AuthenticationState.authenticated);
     }
 
@@ -373,7 +376,9 @@ class MetricsConnection {
   }
 
   Future<ResponseMessage> _actionSocket(
-      String action, Map<String, dynamic> params) async {
+    String action,
+    Map<String, dynamic> params,
+  ) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
     final args = {
@@ -444,49 +449,7 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> chatRoomMessage(
-      {required String room, required Map<String, dynamic> params}) async {
-    // if (!initialized) {
-    //   throw UnexpectedError(
-    //       message:
-    //           'User session hasn\'t been initialized. Please update user tokens');
-    // }
-    final completer = Completer<ResponseMessage>();
-    _lastMessageId++;
-    final args = {
-      'messageId': _lastMessageId,
-      'event': 'say',
-      'room': room,
-      'message': {
-        'authorization': _accessToken,
-        ...params,
-      },
-    };
-
-    _completers[_lastMessageId] = completer;
-    try {
-      _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future;
-      return response;
-    } catch (error) {
-      if (error is Map<String, dynamic>) {
-        throw MetricsApiError.fromMap(error);
-      }
-      throw UnexpectedError(message: error.toString());
-    }
-  }
-
-  Future<void> initializeAuthenticatedSession({required String token}) async {
-    // if (initialized) {
-    //   return;
-    // }
-
-    updateTokens(AuthenticatedResponse(accessToken: token));
-    await _keepAlive(shouldThrow: true);
-  }
-
-  void updateTokens(AuthenticatedResponse authenticatedResponse) {
-    //   initialized = true;
+  void _updateTokens(AuthenticatedResponse authenticatedResponse) {
     _accessToken = authenticatedResponse.accessToken;
 
     if (_accessTokenTimer != null) {
@@ -505,18 +468,24 @@ class MetricsConnection {
     }
   }
 
-  Future<void> _keepAlive({bool shouldThrow = false}) async {
+  Future<void> _keepAlive({
+    bool shouldThrow = false,
+  }) async {
     try {
-      final response = await action(
+      await action(
           path: '/auth/keep-alive', action: 'auth:keepAlive', method: r'POST');
-      final authenticatedResponse =
-          AuthenticatedResponse.fromMap(response.data! as Map<String, dynamic>);
-      updateTokens(authenticatedResponse);
     } catch (_) {
       if (shouldThrow) {
         rethrow;
       }
     }
+  }
+
+  Future<void> initializeAuthenticatedSession({
+    required String token,
+  }) async {
+    _updateTokens(AuthenticatedResponse(accessToken: token));
+    await _keepAlive(shouldThrow: true);
   }
 
   Future<ResponseMessage> action({
@@ -527,9 +496,9 @@ class MetricsConnection {
     Map<String, dynamic> socketParameters = const {},
     Map<String, dynamic>? bodyParameters,
   }) async {
-    ResponseMessage? response;
+    ResponseMessage response;
     try {
-      response = await enqueue(
+      response = await _enqueue(
         action: action,
         queryParameters: {
           'authorization': _accessToken,
@@ -549,7 +518,7 @@ class MetricsConnection {
           }
           _isRefreshTokenInUse = true;
           try {
-            response = await enqueue(
+            response = await _enqueue(
               action: action,
               queryParameters: {
                 'authorization': _refreshToken,
@@ -585,6 +554,35 @@ class MetricsConnection {
       rethrow;
     }
     return _verifyAuthentication(response);
+  }
+
+  Future<ResponseMessage> sendChatRoomMessage({
+    required String room,
+    required Map<String, dynamic> params,
+  }) async {
+    final completer = Completer<ResponseMessage>();
+    _lastMessageId++;
+    final args = {
+      'messageId': _lastMessageId,
+      'event': 'say',
+      'room': room,
+      'message': {
+        'authorization': _accessToken,
+        ...params,
+      },
+    };
+
+    _completers[_lastMessageId] = completer;
+    try {
+      _socket?.sink.add(jsonEncode(args));
+      final response = await completer.future;
+      return response;
+    } catch (error) {
+      if (error is Map<String, dynamic>) {
+        throw MetricsApiError.fromMap(error);
+      }
+      throw UnexpectedError(message: error.toString());
+    }
   }
 
   void dispose() async {
