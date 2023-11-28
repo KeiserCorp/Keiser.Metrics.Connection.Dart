@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
 
-const defaultRequestTimeout = 15000;
 const jwtTTLLimit = 5000;
 final pingRegex = RegExp("^primus::ping::(\\d{13})\$");
 
@@ -41,23 +40,4 @@ class SocketPushMessage {
     required this.room,
     required this.sentAt,
   });
-}
-
-abstract class ConnectionHandler {
-  ConnectionHandler({
-    String restEndpoint = defaultRestEndpoint,
-    String socketEndpoint = defaultSocketEndpoint,
-    bool shouldEnableWebSocket = defaultShouldEnableWebSocket,
-    Duration socketTimeout = defaultSocketTimeout,
-    int concurrentRequestLimit = defaultConcurrentRequestLimit,
-    int requestRetryLimit = defaultRequestRetryLimit,
-  }) : metricsConnection = MetricsConnection(
-          restEndpoint: restEndpoint,
-          socketEndpoint: socketEndpoint,
-          shouldEnableWebSocket: shouldEnableWebSocket,
-          socketTimeout: socketTimeout,
-          concurrentRequestLimit: concurrentRequestLimit,
-          requestRetryLimit: requestRetryLimit,
-        );
-  final MetricsConnection metricsConnection;
 }
