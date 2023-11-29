@@ -79,6 +79,7 @@ class MetricsConnection {
   SessionToken? get decodedAccesstoken =>
       _accessToken != null ? decodeJwt(_accessToken!) : null;
 
+  /// Opens the websocket and rest connections.
   void open() {
     if (_isOpen) {
       return;
@@ -91,11 +92,16 @@ class MetricsConnection {
     }
   }
 
+  /// Closes the websocket and rest connections.
+  ///
+  /// NOTE: This method does not dispose of the instance. All streams will still
+  /// be active.
   void close() {
     _isOpen = false;
     _shouldRetrySocketConnection = false;
     _closeSocket();
     _closeRest();
+    _setAuthStatus(AuthenticationState.unknown);
   }
 
   void _openSocket() async {
@@ -144,6 +150,7 @@ class MetricsConnection {
   void _closeRest() {
     _dio?.close();
     _isDioAvailable = false;
+    _setServerStatus(ServerState.offline);
   }
 
   void _onSocketError(error) {
@@ -289,7 +296,7 @@ class MetricsConnection {
           }
 
           _setServerStatus(ServerState.offline);
-          throw UnexpectedError(message: 'Internet is or Server is offline');
+          throw UnexpectedError(message: 'Internet or Server is offline');
         },
         maxAttempts: shouldRetry ? requestRetryLimit : 0,
         maxDelay: const Duration(seconds: 5),
@@ -481,6 +488,10 @@ class MetricsConnection {
     }
   }
 
+  /// Creates an authenticated session. This method must be called before
+  /// making any requests to authenticated routes.
+  ///
+  /// You can obtain a refresh token by signing in via our website.
   Future<void> initializeAuthenticatedSession({
     required String token,
   }) async {
@@ -488,6 +499,7 @@ class MetricsConnection {
     await _keepAlive(shouldThrow: true);
   }
 
+  /// This method makes a request to a desired route.
   Future<ResponseMessage> action({
     required String path,
     required String action,
@@ -510,8 +522,8 @@ class MetricsConnection {
         path: path,
       );
     } on MetricsApiError catch (error) {
-      // if invalid token
       if (error.code == 616) {
+        // 616 -> invalid token
         if (_refreshToken != null) {
           if (_isRefreshTokenInUse) {
             rethrow;
@@ -528,11 +540,9 @@ class MetricsConnection {
               path: path,
             );
           } on MetricsApiError catch (error) {
-            // if blacklisted refresh token
             if (error.code == 615) {
-              _setAuthStatus(
-                AuthenticationState.unauthenticated,
-              );
+              // 615 -> blacklisted token
+              _setAuthStatus(AuthenticationState.unauthenticated);
             }
             rethrow;
           } catch (_) {
@@ -542,11 +552,13 @@ class MetricsConnection {
           }
         } else {
           // invalid token and no refresh token
-          _setAuthStatus(
-            AuthenticationState.unauthenticated,
-          );
+          _setAuthStatus(AuthenticationState.unauthenticated);
           rethrow;
         }
+      } else if (error.code == 613 && _accessToken == null) {
+        // 613 -> UnauthorizedToken
+        _setAuthStatus(AuthenticationState.unauthenticated);
+        rethrow;
       } else {
         rethrow;
       }
@@ -585,7 +597,8 @@ class MetricsConnection {
     }
   }
 
-  void dispose() async {
+  /// Closes and disposes everything within the connection class.
+  Future<void> dispose() async {
     close();
     await _onConnectionChange.close();
     await _onServerStatusChange.close();
