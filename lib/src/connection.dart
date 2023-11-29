@@ -79,7 +79,7 @@ class MetricsConnection {
   SessionToken? get decodedAccesstoken =>
       _accessToken != null ? decodeJwt(_accessToken!) : null;
 
-  /// Opens the websocket and rest connections.
+  /// Opens the websocket and REST connections.
   void open() {
     if (_isOpen) {
       return;
@@ -95,7 +95,8 @@ class MetricsConnection {
   /// Closes the websocket and rest connections.
   ///
   /// NOTE: This method does not dispose of the instance. All streams will still
-  /// be active.
+  /// be active. If you want to close & dispose of the instance, use the
+  /// `dispose` method instead.
   void close() {
     _isOpen = false;
     _shouldRetrySocketConnection = false;
@@ -243,11 +244,11 @@ class MetricsConnection {
 
   void _requestServerHealth() async {
     try {
-      // TODO - change this to core:status when/if apollo server is updated
+      // TODO - Ensure all servers have core:status action
       await _enqueue(
         path: '/status',
-        action: 'status',
-        method: r'GET',
+        action: 'core:status',
+        method: 'GET',
         shouldRetry: false,
       );
     } catch (error) {
@@ -373,7 +374,7 @@ class MetricsConnection {
     return res;
   }
 
-  ResponseMessage _verifyAuthentication(ResponseMessage response) {
+  ResponseMessage _checkIfAuthenticated(ResponseMessage response) {
     final data = response.data! as Map<String, dynamic>;
     if (data['accessToken'] != null) {
       _updateTokens(AuthenticatedResponse.fromMap(data));
@@ -481,7 +482,10 @@ class MetricsConnection {
   }) async {
     try {
       await action(
-          path: '/auth/keep-alive', action: 'auth:keepAlive', method: r'POST');
+        path: '/auth/keep-alive',
+        action: 'auth:keepAlive',
+        method: 'POST',
+      );
     } catch (_) {
       if (shouldThrow) {
         rethrow;
@@ -566,9 +570,10 @@ class MetricsConnection {
     } catch (_) {
       rethrow;
     }
-    return _verifyAuthentication(response);
+    return _checkIfAuthenticated(response);
   }
 
+  /// Send a websocket message directly to a server chatroom
   Future<ResponseMessage> sendChatRoomMessage({
     required String room,
     required Map<String, dynamic> params,
