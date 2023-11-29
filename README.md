@@ -26,13 +26,19 @@ If you are looking for our SDK which contains convenience functions & models map
 
 ## Getting started
 
-Install:
+### Install
+
+```bash
+dart pub add keiser_metrics_connection
+```
+
+or
 
 ```bash
 flutter pub add keiser_metrics_connection
 ```
 
-Import:
+### Import
 
 ```dart
 import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
@@ -63,7 +69,7 @@ await connection.initializeAuthenticatedSession(token: myRefreshToken);
 final response = await connection.action(/* route, params */);
 
 // Dispose of the instance when you are done with it.
-connection.dispose();
+await connection.dispose();
 ```
 
 ## Additional information
