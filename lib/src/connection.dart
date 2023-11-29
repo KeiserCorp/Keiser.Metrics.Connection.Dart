@@ -140,8 +140,9 @@ class MetricsConnection {
     _dio ??= Dio(
       BaseOptions(
         baseUrl: restEndpoint,
-        connectTimeout: 5000,
-        receiveTimeout: 3000,
+        connectTimeout: 10000,
+        sendTimeout: 15000,
+        receiveTimeout: 45000,
       ),
     );
     _isDioAvailable = true;

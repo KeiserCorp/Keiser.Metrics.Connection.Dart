@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dotenv/dotenv.dart';
 import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
@@ -21,9 +22,11 @@ class _Server {
   String get socketEndpoint => '${isSecure ? 'wss' : 'ws'}://$domain/ws';
 }
 
+// ! if running locally, run `export ENV=DEV` in terminal, before running test
+// ! if configuring on CI, run `echo "ENV=PROD" >> $GITHUB_ENV` as a step before running test
+
 void main() {
-  const isProduction =
-      String.fromEnvironment('ENV', defaultValue: 'DEV') == 'PROD';
+  final isProduction = Platform.environment['ENV'] == 'PROD';
   final List<_Server> servers = [];
   MetricsConnection? connection;
 
@@ -56,12 +59,12 @@ void main() {
     );
   }
 
-  Future<void> _openConnection(_Server server) async {
+  Future<void> openConnection(_Server server) async {
     connection = MetricsConnection(
       restEndpoint: server.restEndpoint,
       socketEndpoint: server.socketEndpoint,
       requestRetryLimit: 1,
-      socketTimeout: const Duration(seconds: isProduction ? 30 : 5),
+      socketTimeout: Duration(seconds: isProduction ? 30 : 5),
     );
 
     connectionStateSubscription =
@@ -77,7 +80,7 @@ void main() {
     });
   }
 
-  Future<void> _resetTestState() async {
+  Future<void> resetTestState() async {
     await connectionStateSubscription?.cancel();
     await serverStateSubscription?.cancel();
     await authenticationStateSubscription?.cancel();
@@ -94,7 +97,7 @@ void main() {
   for (final server in servers) {
     group('Target Server: ${server.domain}', () {
       test('Can open metrics connection', () async {
-        await _openConnection(server);
+        await openConnection(server);
 
         await Future.delayed(const Duration(seconds: 6));
         expect(connectionState, ConnectionState.connected);
@@ -103,8 +106,8 @@ void main() {
       });
 
       test('Can dispose and re-open metrics connection', () async {
-        await _resetTestState();
-        await _openConnection(server);
+        await resetTestState();
+        await openConnection(server);
 
         await Future.delayed(const Duration(seconds: 6));
         expect(connectionState, ConnectionState.connected);
@@ -193,7 +196,7 @@ void main() {
       });
 
       tearDownAll(() async {
-        await _resetTestState();
+        await resetTestState();
       });
     });
   }
