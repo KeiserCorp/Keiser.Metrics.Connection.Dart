@@ -1,0 +1,35 @@
+name: Development Test
+
+on:
+  push:
+    branches:
+      - development 
+  pull_request:
+    branches:
+      - development
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set environment variable
+      run: echo "ENV=PROD" >> $GITHUB_ENV
+
+    - name: Create .env.prod file
+      run: |
+        echo "SERVER_DOMAIN_1=${{ secrets.SERVER_DOMAIN_1 }}" >> .env.prod
+        echo "SERVER_EMAIL_1=${{ secrets.SERVER_EMAIL_1 }}" >> .env.prod
+        echo "SERVER_PASSWORD_1=${{ secrets.SERVER_PASSWORD_1 }}" >> .env.prod
+
+    - name: Set up Dart SDK
+      uses: dart-lang/setup-dart@v1
+
+    - name: Run Dart tests
+      run: dart test -r github test/connection_test.dart

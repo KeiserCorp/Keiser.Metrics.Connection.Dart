@@ -4,7 +4,7 @@ enum ConnectionState { disconnected, connected }
 
 enum ServerState { online, offline }
 
-enum AuthenticationStatus { unauthenticated, authenticated, unknown }
+enum AuthenticationState { unauthenticated, authenticated, unknown }
 
 const defaultRestEndpoint = 'https://metrics-api.keiser.com/api';
 const defaultSocketEndpoint = 'wss://metrics-api.keiser.com/ws';

@@ -1,6 +1,6 @@
 # keiser_metrics_connection
 
-The purpose of this package is to provide a convenient way to **connect** to the Keiser Metrics server.
+The purpose of this package is to provide a convenient way to **connect** to the Keiser Metrics server. It does not provide any interface representing the routes/models of the server.
 
 If you are looking for our SDK which contains convenience functions & models mapped to all of our server routes, please refer to [keiser_metrics_sdk](https://pub.dev).
 
@@ -11,10 +11,10 @@ If you are looking for our SDK which contains convenience functions & models map
 - **Websocket**
   - Primary method of communication with server.
 - **REST**
-  - Fallback (if websocket is not enabled).
+  - HTTP Fallback (if websocket is not enabled).
 - **Request Queue**
   - Will start queueing requests after a certain amount within a short time period.
-- **Retry**
+- **Request Retry**
   - Will automatically retry failed requests a certain number of times.
 - **Keep Alive**
   - Will automatically make `keep-alive` requests when authenticated
@@ -26,13 +26,19 @@ If you are looking for our SDK which contains convenience functions & models map
 
 ## Getting started
 
-Install:
+### Install
+
+```bash
+dart pub add keiser_metrics_connection
+```
+
+or
 
 ```bash
 flutter pub add keiser_metrics_connection
 ```
 
-Import:
+### Import
 
 ```dart
 import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
@@ -40,54 +46,31 @@ import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
 
 ## Usage
 
-This package comes with **two** different main classes you can instantiate. Choose the one that fits your needs.
-
-### Metrics Connection
-
-Use this if you only intend to make requests to `unauthenticated` routes. All constructor params are optional.
-
 ```dart
 final connection = MetricsConnection(
     shouldEnableWebSocket, // default: true
     socketTimeout, // default: 30 seconds
     concurrentRequestLimit, // default: 5
     requestRetryLimit, // default: 5
+    shouldEnableErrorLogging, // default: false
 );
 
-connection.onConnectionChange.listen(event => {/* Do something */});
-connection.onServerStatusChange.listen(event => {/* Do something */});
+// Listen for state changes
+connection.onConnectionStatusChange.listen(event => {/* websocket connected || websocket disconnected */});
+connection.onServerStatusChange.listen(event => {/* server online || server offline */});
+connection.onAuthenticationStatusChange.listen(event => {/* authenticated || unauthenticated || unknown */});
+connection.onRefreshTokenChange.listen(event => {/* new refresh token */});
 
-final response = await connection.action(path: '/status', action: 'core:status', method: r'GET');
+// You  must call this method before making a request to any authenticated routes.
+// You can obtain a refresh token by signing in via our website.
+await connection.initializeAuthenticatedSession(token: myRefreshToken);
+
+// Use the `action` method to make requests to desired routes.
+final response = await connection.action(/* route, params */);
+
+// Dispose of the instance when you are done with it.
+await connection.dispose();
 ```
-
-### Authenticated Metrics Connection
-
-Use this if you intend to make requests to `authenticated` routes. Again, all constructor params are optional.
-
-```dart
-final authenticatedConnection = AuthenticatedMetricsConnection(
-    shouldEnableWebSocket, // default: true
-    socketTimeout, // default: 30 seconds
-    concurrentRequestLimit, // default: 5
-    requestRetryLimit, // default: 5
-);
-
-authenticatedConnection.metricsConnection.onConnectionChange.listen(event => {/* Do something */});
-authenticatedConnection.metricsConnection.onServerStatusChange.listen(event => {/* Do something */});
-authenticatedConnection.metricsConnection.onAuthenticationStatusChanged.listen(event => {/* Do something */});
-authenticatedConnection.onRefreshToken.listen(event => {/* Store new refresh token */});
-
-
-await authenticatedConnection.initializeAuthenticatedSession(token: myRefreshToken);
-
-// Any time you make an authenticated request, make sure you call `updateTokens` after you receive a response.
-final response = await authenticatedConnection.action(/* Authenticated Route */);
-final authenticatedResponse =
-          AuthenticatedResponse.fromMap(response.data! as Map<String, dynamic>);
-authenticatedConnection.updateTokens(authenticatedResponse);
-```
-
-> NOTE: You must sign in via our website to obtain a refresh token.
 
 ## Additional information
 
@@ -109,12 +92,12 @@ class MetricsApiError implements Exception {
 }
 ```
 
-### Events
+### State Events
 
 ```dart
-enum ConnectionState { disconnected, connected }
+enum ConnectionState { disconnected, connected } // websocket
 
 enum ServerState { online, offline }
 
-enum AuthenticationStatus { unauthenticated, authenticated, unknown }
+enum AuthenticationState { unauthenticated, authenticated, unknown }
 ```

@@ -8,59 +8,78 @@ class MetricsConnection {
     this.socketTimeout = defaultSocketTimeout,
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
+    this.shouldEnableErrorLogging = false,
   }) {
     open();
   }
 
-  final Map<int, Completer> _completers = {};
-
-  final StreamController<ConnectionStateEvent> _onConnectionChange =
-      StreamController<ConnectionStateEvent>.broadcast();
-
-  final StreamController<ServerState> _onServerStatusChange =
-      StreamController<ServerState>.broadcast();
-
-  final StreamController<AuthenticationStatus> _onAuthenticationStatusChange =
-      StreamController<AuthenticationStatus>.broadcast();
-
-  final StreamController<MetricsApiError> _onError =
-      StreamController<MetricsApiError>.broadcast();
-
+  // params
   final String restEndpoint;
   final String socketEndpoint;
   final bool shouldEnableWebSocket;
   final int concurrentRequestLimit;
   final int requestRetryLimit;
   final Duration socketTimeout;
+  final bool shouldEnableErrorLogging;
 
-  io_web_socket_channel.WebSocketChannel? _socket;
+  // internal
+  WebSocketChannel? _socket;
   Dio? _dio;
   int _lastMessageId = 0;
   int _socketRetryAttempts = 0;
   bool _shouldRetrySocketConnection = true;
   bool _isDioAvailable = false;
-  AuthenticationStatus authenticationStatus = AuthenticationStatus.unknown;
-
-  ConnectionState _socketConnectionState = ConnectionState.disconnected;
-  ServerState _serverStatus = ServerState.offline;
+  final List<RequestHandler> _requestQueue = [];
+  final Map<int, Completer> _completers = {};
+  int _activeRequest = 0;
+  bool _isOpen = false;
+  String? _accessToken;
+  String? _refreshToken;
+  Timer? _accessTokenTimer;
+  bool _isRefreshTokenInUse = false;
   StreamSubscription? _socketSubscription;
 
-  bool get isConnected => _socketConnectionState == ConnectionState.connected;
+  // state
+  AuthenticationState _authenticationStatus = AuthenticationState.unknown;
+  ConnectionState _socketConnectionState = ConnectionState.disconnected;
+  ServerState _serverStatus = ServerState.offline;
+  bool get isSocketConnected =>
+      _socketConnectionState == ConnectionState.connected;
 
-  Stream<ConnectionStateEvent> get onConnectionChange =>
+  // streams
+  final StreamController<ConnectionState> _onConnectionChange =
+      StreamController<ConnectionState>.broadcast();
+
+  final StreamController<ServerState> _onServerStatusChange =
+      StreamController<ServerState>.broadcast();
+
+  final StreamController<AuthenticationState> _onAuthenticationStatusChange =
+      StreamController<AuthenticationState>.broadcast();
+
+  final StreamController<MetricsApiError> _onError =
+      StreamController<MetricsApiError>.broadcast();
+
+  final StreamController<RefreshTokenChangeEvent> _onRefreshChange =
+      StreamController<RefreshTokenChangeEvent>.broadcast();
+
+  // public getters
+  Stream<ConnectionState> get onConnectionStatusChange =>
       _onConnectionChange.stream;
 
   Stream<ServerState> get onServerStatusChange => _onServerStatusChange.stream;
 
-  Stream<AuthenticationStatus> get onAuthenticationStatusChanged =>
+  Stream<AuthenticationState> get onAuthenticationStatusChange =>
       _onAuthenticationStatusChange.stream;
+
+  Stream<RefreshTokenChangeEvent> get onRefreshTokenChange =>
+      _onRefreshChange.stream;
 
   Stream<MetricsApiError> get onError => _onError.stream;
 
-  final List<RequestHandler> _requestQueue = [];
-  int _activeRequest = 0;
-  bool _isOpen = false;
+  SessionToken? get decodedAccesstoken =>
+      _accessToken != null ? decodeJwt(_accessToken!) : null;
 
+  /// Opens the websocket and REST connections.
   void open() {
     if (_isOpen) {
       return;
@@ -73,12 +92,25 @@ class MetricsConnection {
     }
   }
 
+  /// Closes the websocket and rest connections.
+  ///
+  /// NOTE: This method does not dispose of the instance. All streams will still
+  /// be active. If you want to close & dispose of the instance, use the
+  /// `dispose` method instead.
+  void close() {
+    _isOpen = false;
+    _shouldRetrySocketConnection = false;
+    _closeSocket();
+    _closeRest();
+    _setAuthStatus(AuthenticationState.unknown);
+  }
+
   void _openSocket() async {
-    if (isConnected) {
+    if (isSocketConnected) {
       _closeSocket();
     }
     _shouldRetrySocketConnection = true;
-    _socket = io_web_socket_channel.WebSocketChannel.connect(
+    _socket = WebSocketChannel.connect(
       Uri.parse(socketEndpoint),
     );
     try {
@@ -89,7 +121,9 @@ class MetricsConnection {
         onDone: _onSocketDone,
       );
     } catch (e) {
-      print(e);
+      if (shouldEnableErrorLogging) {
+        print(e);
+      }
       _requestServerHealth();
       _onSocketDone();
     }
@@ -98,7 +132,7 @@ class MetricsConnection {
   void _closeSocket() {
     _socketSubscription?.cancel();
     _socketSubscription = null;
-    _socket?.sink.close(status.normalClosure);
+    _socket?.sink.close(socket_status.normalClosure);
     _socket = null;
     _setConnectionState(ConnectionState.disconnected);
   }
@@ -107,8 +141,9 @@ class MetricsConnection {
     _dio ??= Dio(
       BaseOptions(
         baseUrl: restEndpoint,
-        connectTimeout: 5000,
-        receiveTimeout: 3000,
+        connectTimeout: 10000,
+        sendTimeout: 15000,
+        receiveTimeout: 45000,
       ),
     );
     _isDioAvailable = true;
@@ -117,11 +152,14 @@ class MetricsConnection {
   void _closeRest() {
     _dio?.close();
     _isDioAvailable = false;
+    _setServerStatus(ServerState.offline);
   }
 
   void _onSocketError(error) {
     _setConnectionState(ConnectionState.disconnected);
-    print('Socket Error: $error');
+    if (shouldEnableErrorLogging) {
+      print('Socket Error: $error');
+    }
   }
 
   void _onSocketDone() {
@@ -148,21 +186,13 @@ class MetricsConnection {
     _openSocket();
   }
 
-  void close() {
-    _isOpen = false;
-    _shouldRetrySocketConnection = false;
-    _closeSocket();
-    _closeRest();
-  }
-
   void _setConnectionState(ConnectionState connectionState) {
     if (connectionState == ConnectionState.connected) {
       _setServerStatus(ServerState.online);
     }
 
     _socketConnectionState = connectionState;
-    _onConnectionChange
-        .add(ConnectionStateEvent(connectionState: _socketConnectionState));
+    _onConnectionChange.add(_socketConnectionState);
   }
 
   void _setServerStatus(ServerState status) {
@@ -172,9 +202,9 @@ class MetricsConnection {
     }
   }
 
-  void _setAuthStatus(AuthenticationStatus status) {
-    if (authenticationStatus != status) {
-      authenticationStatus = status;
+  void _setAuthStatus(AuthenticationState status) {
+    if (_authenticationStatus != status) {
+      _authenticationStatus = status;
       _onAuthenticationStatusChange.add(status);
     }
   }
@@ -189,20 +219,22 @@ class MetricsConnection {
             _pong(pingResults.group(1)!);
           }
         } else if (data == 'primus::server::close') {
-          _socket?.sink.close(status.goingAway);
+          _socket?.sink.close(socket_status.goingAway);
         }
       } else if (parsedJson is Map<String, dynamic> &&
           parsedJson.containsKey('context')) {
         if (parsedJson['context'] == 'response') {
           _parseResponse(ResponseMessage.fromMap(parsedJson));
-        } else if (!isConnected) {
+        } else if (!isSocketConnected) {
           _setConnectionState(ConnectionState.connected);
           _setServerStatus(ServerState.online);
           _socketRetryAttempts = 0;
         }
       }
     } catch (error) {
-      print('Unparseable response: $error');
+      if (shouldEnableErrorLogging) {
+        print('Unparseable response: $error');
+      }
     }
   }
 
@@ -212,11 +244,11 @@ class MetricsConnection {
 
   void _requestServerHealth() async {
     try {
-      // TODO - change this to core:status when/if apollo server is updated
-      await action(
+      // TODO - Ensure all servers have core:status action
+      await _enqueue(
         path: '/status',
-        action: 'status',
-        method: r'GET',
+        action: 'core:status',
+        method: 'GET',
         shouldRetry: false,
       );
     } catch (error) {
@@ -237,14 +269,15 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> executeRequest(
-      String path,
-      String action,
-      String method,
-      bool shouldRetry,
-      Map<String, dynamic> queryParameters,
-      Map<String, dynamic> socketParameters,
-      Map<String, dynamic>? bodyParameters) async {
+  Future<ResponseMessage> _executeRequest(
+    String path,
+    String action,
+    String method,
+    bool shouldRetry,
+    Map<String, dynamic> queryParameters,
+    Map<String, dynamic> socketParameters,
+    Map<String, dynamic>? bodyParameters,
+  ) async {
     ResponseMessage response;
     try {
       response = await retry(
@@ -254,7 +287,7 @@ class MetricsConnection {
                 path: path, method: method, bodyParameters: bodyParameters);
           }
 
-          if (isConnected) {
+          if (isSocketConnected) {
             return _actionSocket(
                 action, {...queryParameters, ...socketParameters});
           }
@@ -265,7 +298,7 @@ class MetricsConnection {
           }
 
           _setServerStatus(ServerState.offline);
-          throw UnexpectedError(message: 'Internet is or Server is offline');
+          throw UnexpectedError(message: 'Internet or Server is offline');
         },
         maxAttempts: shouldRetry ? requestRetryLimit : 0,
         maxDelay: const Duration(seconds: 5),
@@ -274,8 +307,10 @@ class MetricsConnection {
     } on DioError catch (error) {
       throw UnexpectedError(message: error.message);
     } catch (error) {
-      print(
-          'Action: $action, Time: ${DateTime.now().toUtc()}, SDK Error: $error');
+      if (shouldEnableErrorLogging) {
+        print(
+            'Action: $action, Time: ${DateTime.now().toUtc()}, Error: $error');
+      }
       if (error is MetricsApiError) {
         rethrow;
       }
@@ -284,13 +319,13 @@ class MetricsConnection {
     return response;
   }
 
-  void dequeue() async {
+  void _dequeue() async {
     if (_requestQueue.isEmpty) {
       return;
     }
     final request = _requestQueue.removeAt(0);
     try {
-      final response = await executeRequest(
+      final response = await _executeRequest(
           request.path,
           request.action,
           request.method,
@@ -304,23 +339,24 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> action(
-      {required String path,
-      required String action,
-      required String method,
-      bool shouldRetry = true,
-      Map<String, dynamic> queryParameters = const {},
-      Map<String, dynamic> socketParameters = const {},
-      Map<String, dynamic>? bodyParameters}) async {
+  Future<ResponseMessage> _enqueue({
+    required String path,
+    required String action,
+    required String method,
+    bool shouldRetry = true,
+    Map<String, dynamic> queryParameters = const {},
+    Map<String, dynamic> socketParameters = const {},
+    Map<String, dynamic>? bodyParameters,
+  }) async {
     if (_activeRequest < concurrentRequestLimit) {
       _activeRequest++;
       try {
-        final res = await executeRequest(path, action, method, shouldRetry,
+        final res = await _executeRequest(path, action, method, shouldRetry,
             queryParameters, socketParameters, bodyParameters);
-        return _verifyAuthentication(res);
+        return res;
       } finally {
         _activeRequest--;
-        dequeue();
+        _dequeue();
       }
     }
     final completer = Completer<ResponseMessage>();
@@ -335,20 +371,23 @@ class MetricsConnection {
         method: method);
     _requestQueue.add(requestHandler);
     final res = await completer.future;
-    return _verifyAuthentication(res);
+    return res;
   }
 
-  ResponseMessage _verifyAuthentication(ResponseMessage response) {
-    final res = response.data as Map<String, dynamic>;
-    if (res['accessToken'] != null) {
-      _setAuthStatus(AuthenticationStatus.authenticated);
+  ResponseMessage _checkIfAuthenticated(ResponseMessage response) {
+    final data = response.data! as Map<String, dynamic>;
+    if (data['accessToken'] != null) {
+      _updateTokens(AuthenticatedResponse.fromMap(data));
+      _setAuthStatus(AuthenticationState.authenticated);
     }
 
     return response;
   }
 
   Future<ResponseMessage> _actionSocket(
-      String action, Map<String, dynamic> params) async {
+    String action,
+    Map<String, dynamic> params,
+  ) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
     final args = {
@@ -369,15 +408,16 @@ class MetricsConnection {
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
       }
-      throw Exception(error);
+      throw UnexpectedError(message: error.toString());
     }
   }
 
-  Future<ResponseMessage> _actionRest(
-      {required String path,
-      required dynamic method,
-      Map<String, dynamic>? queryParameters,
-      Map<String, dynamic>? bodyParameters}) async {
+  Future<ResponseMessage> _actionRest({
+    required String path,
+    required dynamic method,
+    Map<String, dynamic>? queryParameters,
+    Map<String, dynamic>? bodyParameters,
+  }) async {
     try {
       final response = await _dio!.request<Object>(
         path,
@@ -392,7 +432,9 @@ class MetricsConnection {
       _setServerStatus(ServerState.offline);
       return ResponseMessage(data: response.data);
     } on DioError catch (e) {
-      print(e.message);
+      if (shouldEnableErrorLogging) {
+        print(e.message);
+      }
       if (e.type == DioErrorType.connectTimeout) {
         _setServerStatus(ServerState.offline);
       } else if (e.type == DioErrorType.other) {
@@ -416,8 +458,126 @@ class MetricsConnection {
     }
   }
 
-  Future<ResponseMessage> _chatRoomSocket(
-      {required String room, required Map<String, dynamic> params}) async {
+  void _updateTokens(AuthenticatedResponse authenticatedResponse) {
+    _accessToken = authenticatedResponse.accessToken;
+
+    if (_accessTokenTimer != null) {
+      _accessTokenTimer!.cancel();
+    }
+
+    final tokenTTL = decodedAccesstoken!.exp * 1000 -
+        DateTime.now().millisecondsSinceEpoch -
+        jwtTTLLimit;
+    _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
+
+    if (authenticatedResponse.refreshToken != null) {
+      _refreshToken = authenticatedResponse.refreshToken;
+      _onRefreshChange
+          .add(RefreshTokenChangeEvent(refreshToken: _refreshToken!));
+    }
+  }
+
+  Future<void> _keepAlive({
+    bool shouldThrow = false,
+  }) async {
+    try {
+      await action(
+        path: '/auth/keep-alive',
+        action: 'auth:keepAlive',
+        method: 'POST',
+      );
+    } catch (_) {
+      if (shouldThrow) {
+        rethrow;
+      }
+    }
+  }
+
+  /// Creates an authenticated session. This method must be called before
+  /// making any requests to authenticated routes.
+  ///
+  /// You can obtain a refresh token by signing in via our website.
+  Future<void> initializeAuthenticatedSession({
+    required String token,
+  }) async {
+    _updateTokens(AuthenticatedResponse(accessToken: token));
+    await _keepAlive(shouldThrow: true);
+  }
+
+  /// This method makes a request to a desired route.
+  Future<ResponseMessage> action({
+    required String path,
+    required String action,
+    required String method,
+    Map<String, dynamic> queryParameters = const {},
+    Map<String, dynamic> socketParameters = const {},
+    Map<String, dynamic>? bodyParameters,
+  }) async {
+    ResponseMessage response;
+    try {
+      response = await _enqueue(
+        action: action,
+        queryParameters: {
+          'authorization': _accessToken,
+          ...queryParameters,
+        },
+        socketParameters: socketParameters,
+        bodyParameters: bodyParameters,
+        method: method,
+        path: path,
+      );
+    } on MetricsApiError catch (error) {
+      if (error.code == 616) {
+        // 616 -> invalid token
+        if (_refreshToken != null) {
+          if (_isRefreshTokenInUse) {
+            rethrow;
+          }
+          _isRefreshTokenInUse = true;
+          try {
+            response = await _enqueue(
+              action: action,
+              queryParameters: {
+                'authorization': _refreshToken,
+                ...queryParameters,
+              },
+              method: method,
+              path: path,
+            );
+          } on MetricsApiError catch (error) {
+            if (error.code == 615) {
+              // 615 -> blacklisted token
+              _setAuthStatus(AuthenticationState.unauthenticated);
+            }
+            rethrow;
+          } catch (_) {
+            rethrow;
+          } finally {
+            _isRefreshTokenInUse = false;
+          }
+        } else {
+          // invalid token and no refresh token
+          _setAuthStatus(AuthenticationState.unauthenticated);
+          rethrow;
+        }
+      } else if (error.code == 613 && _accessToken == null) {
+        // 613 -> UnauthorizedToken
+        _setAuthStatus(AuthenticationState.unauthenticated);
+        rethrow;
+      } else {
+        rethrow;
+      }
+    } catch (_) {
+      rethrow;
+    }
+    return _checkIfAuthenticated(response);
+  }
+
+  /// Send a websocket message directly to a server chatroom
+  Future<ResponseMessage> sendChatRoomMessage({
+    required String room,
+    required Map<String, dynamic> params,
+  }) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
     final args = {
@@ -425,6 +585,7 @@ class MetricsConnection {
       'event': 'say',
       'room': room,
       'message': {
+        'authorization': _accessToken,
         ...params,
       },
     };
@@ -438,170 +599,17 @@ class MetricsConnection {
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
       }
-      throw Exception(error);
+      throw UnexpectedError(message: error.toString());
     }
   }
 
-  void dispose() {
-    _onConnectionChange.close();
-  }
-}
-
-class AuthenticatedMetricsConnection extends ConnectionHandler {
-  AuthenticatedMetricsConnection({
-    String restEndpoint = defaultRestEndpoint,
-    String socketEndpoint = defaultSocketEndpoint,
-    bool shouldEnableWebSocket = defaultShouldEnableWebSocket,
-    Duration socketTimeout = defaultSocketTimeout,
-    int concurrentRequestLimit = defaultConcurrentRequestLimit,
-    int requestRetryLimit = defaultRequestRetryLimit,
-  }) : super(
-          restEndpoint: restEndpoint,
-          socketEndpoint: socketEndpoint,
-          shouldEnableWebSocket: shouldEnableWebSocket,
-          socketTimeout: socketTimeout,
-          concurrentRequestLimit: concurrentRequestLimit,
-          requestRetryLimit: requestRetryLimit,
-        );
-
-  late String _accessToken;
-  String? _refreshToken;
-  Timer? _accessTokenTimer;
-  bool refreshTokenInUse = false;
-  bool initialized = false;
-
-  final StreamController<RefreshTokenChangeEvent> _onRefreshChange =
-      StreamController<RefreshTokenChangeEvent>.broadcast();
-
-  SessionToken get decodedAccesstoken => decodeJwt(_accessToken);
-
-  Stream<RefreshTokenChangeEvent> get onRefreshToken => _onRefreshChange.stream;
-
-  Future<void> initializeAuthenticatedSession({required String token}) async {
-    if (initialized) {
-      return;
-    }
-
-    updateTokens(AuthenticatedResponse(accessToken: token));
-    await _keepAlive(shouldThrow: true);
-  }
-
-  void updateTokens(AuthenticatedResponse authenticatedResponse) {
-    initialized = true;
-    _accessToken = authenticatedResponse.accessToken;
-
-    if (_accessTokenTimer != null) {
-      _accessTokenTimer!.cancel();
-    }
-
-    final tokenTTL = decodedAccesstoken.exp * 1000 -
-        DateTime.now().millisecondsSinceEpoch -
-        jwtTTLLimit;
-    _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
-
-    if (authenticatedResponse.refreshToken != null) {
-      _refreshToken = authenticatedResponse.refreshToken;
-      _onRefreshChange
-          .add(RefreshTokenChangeEvent(refreshToken: _refreshToken!));
-    }
-  }
-
-  Future<void> _keepAlive({bool shouldThrow = false}) async {
-    try {
-      final response = await action(
-          path: '/auth/keep-alive', action: 'auth:keepAlive', method: r'POST');
-      final authenticatedResponse =
-          AuthenticatedResponse.fromMap(response.data! as Map<String, dynamic>);
-      updateTokens(authenticatedResponse);
-    } catch (_) {
-      if (shouldThrow) {
-        rethrow;
-      }
-    }
-  }
-
-  Future<void> chatRoomMessage(
-      {required String room, required Map<String, dynamic> params}) async {
-    if (!initialized) {
-      throw UnexpectedError(
-          message:
-              'User session hasn\'t been initialized. Please update user tokens');
-    }
-    try {
-      await metricsConnection._chatRoomSocket(room: room, params: {
-        'authorization': _accessToken,
-        ...params,
-      });
-    } catch (_) {
-      rethrow;
-    }
-  }
-
-  Future<ResponseMessage> action({
-    required String path,
-    required String action,
-    required String method,
-    Map<String, dynamic> queryParameters = const {},
-    Map<String, dynamic> socketParameters = const {},
-    Map<String, dynamic>? bodyParameters,
-  }) async {
-    if (!initialized) {
-      throw UnexpectedError(
-          message:
-              'User session hasn\'t been initialized.  Please update user tokens');
-    }
-    ResponseMessage? response;
-    try {
-      response = await metricsConnection.action(
-          action: action,
-          queryParameters: {
-            'authorization': _accessToken,
-            ...queryParameters,
-          },
-          socketParameters: socketParameters,
-          bodyParameters: bodyParameters,
-          method: method,
-          path: path);
-    } on MetricsApiError catch (error) {
-      if (error.code == 616) {
-        if (_refreshToken != null) {
-          if (refreshTokenInUse) {
-            rethrow;
-          }
-          refreshTokenInUse = true;
-          try {
-            response = await metricsConnection.action(
-                action: action,
-                queryParameters: {
-                  'authorization': _refreshToken,
-                  ...queryParameters,
-                },
-                method: method,
-                path: path);
-          } on MetricsApiError catch (error) {
-            if (error.code == 615) {
-              metricsConnection._setAuthStatus(
-                AuthenticationStatus.unauthenticated,
-              );
-            }
-            rethrow;
-          } catch (_) {
-            rethrow;
-          } finally {
-            refreshTokenInUse = false;
-          }
-        } else {
-          metricsConnection._setAuthStatus(
-            AuthenticationStatus.unauthenticated,
-          );
-          rethrow;
-        }
-      } else {
-        rethrow;
-      }
-    } catch (_) {
-      rethrow;
-    }
-    return response;
+  /// Closes and disposes everything within the connection class.
+  Future<void> dispose() async {
+    close();
+    await _onConnectionChange.close();
+    await _onServerStatusChange.close();
+    await _onAuthenticationStatusChange.close();
+    await _onError.close();
+    await _onRefreshChange.close();
   }
 }
