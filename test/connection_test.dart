@@ -23,7 +23,6 @@ class _Server {
 }
 
 // ! if running locally, run `export ENV=DEV` in terminal, before running test
-// ! if configuring on CI, run `echo "ENV=PROD" >> $GITHUB_ENV` as a step before running test
 
 void main() {
   final isProduction = Platform.environment['ENV'] == 'PROD';
