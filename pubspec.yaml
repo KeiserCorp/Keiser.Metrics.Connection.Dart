@@ -1,7 +1,7 @@
 name: keiser_metrics_connection
-description: "A new Flutter package project."
-version: 0.0.1
-homepage:
+description: "Dart package for Keiser Metrics to handle both websockets and rest calls."
+version: 0.1.0
+repository: https://github.com/KeiserCorp/Keiser.Metrics.Connection.Dart
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

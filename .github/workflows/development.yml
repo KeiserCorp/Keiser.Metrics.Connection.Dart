@@ -32,4 +32,4 @@ jobs:
       uses: dart-lang/setup-dart@v1
 
     - name: Run Dart tests
-      run: dart test -r github test/connection_test.dart
+      run: dart test -r github test/keiser_metrics_connection_test.dart
