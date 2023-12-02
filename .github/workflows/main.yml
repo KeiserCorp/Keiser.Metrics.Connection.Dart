@@ -1,0 +1,48 @@
+name: Main
+
+on: 
+  push:
+    branches:
+      - main
+
+jobs:
+  version-check:
+    name: Version Check
+    runs-on: ubuntu-latest    
+    outputs:
+      version: ${{ steps.check.outputs.version-number }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - id: check
+        uses: NiklasLehnfeld/flutter-version-number-action@main
+        with:
+          file-path: pubspec.yaml
+
+  build:
+    name: Release
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ needs.version-check.outputs.version }}
+          release_name: Release v${{ needs.version-check.outputs.version }}
+
+      - name: Send Notification
+        uses: bayssmekanique/action-simple-slack-notifier@v1
+        if: always()
+        with:
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          channel: '#deployment'
+          platform: Flutter 
+          status: ${{ job.status }}
+          version: ${{ needs.version-check.outputs.version }}
