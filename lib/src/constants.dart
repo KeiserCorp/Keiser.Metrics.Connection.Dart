@@ -1,5 +1,7 @@
 part of keiser_metrics_connection;
 
+enum WebsocketMessageContext { response, user }
+
 enum ConnectionState { disconnected, connected }
 
 enum ServerState { online, offline }
