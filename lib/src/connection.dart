@@ -62,6 +62,9 @@ class MetricsConnection {
   final StreamController<RefreshTokenChangeEvent> _onRefreshChange =
       StreamController<RefreshTokenChangeEvent>.broadcast();
 
+  final StreamController<ChatRoomMessage> _onChatRoomMessage =
+      StreamController<ChatRoomMessage>.broadcast();
+
   // public getters
   Stream<ConnectionState> get onConnectionStatusChange =>
       _onConnectionChange.stream;
@@ -75,6 +78,8 @@ class MetricsConnection {
       _onRefreshChange.stream;
 
   Stream<MetricsApiError> get onError => _onError.stream;
+
+  Stream<ChatRoomMessage> get onChatRoomMessage => _onChatRoomMessage.stream;
 
   SessionToken? get decodedAccesstoken =>
       _accessToken != null ? decodeJwt(_accessToken!) : null;
@@ -225,6 +230,8 @@ class MetricsConnection {
           parsedJson.containsKey('context')) {
         if (parsedJson['context'] == 'response') {
           _parseResponse(ResponseMessage.fromMap(parsedJson));
+        } else if (parsedJson['context'] == 'user') {
+          _onChatRoomMessage.add(ChatRoomMessage.fromMap(parsedJson));
         } else if (!isSocketConnected) {
           _setConnectionState(ConnectionState.connected);
           _setServerStatus(ServerState.online);
@@ -611,5 +618,6 @@ class MetricsConnection {
     await _onAuthenticationStatusChange.close();
     await _onError.close();
     await _onRefreshChange.close();
+    await _onChatRoomMessage.close();
   }
 }

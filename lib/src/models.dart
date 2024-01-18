@@ -37,7 +37,7 @@ class AuthenticatedResponse {
 }
 
 class ResponseMessage {
-  final context = 'response';
+  final context = WebsocketMessageContext.response;
   Object? data;
   int? messageId;
   Object? error;
@@ -48,15 +48,44 @@ class ResponseMessage {
     this.error,
   });
 
-  factory ResponseMessage.fromMap(Map<String, dynamic> json) {
+  factory ResponseMessage.fromMap(Map<String, dynamic> map) {
     return ResponseMessage(
-      data: json,
-      messageId: json['messageId'],
-      error: json['error'],
+      data: map,
+      messageId: map['messageId'],
+      error: map['error'],
     );
   }
 
   @override
   String toString() =>
       'ResponseMessage(data: $data, messageId: $messageId, error: $error)';
+}
+
+class ChatRoomMessage {
+  final context = WebsocketMessageContext.user;
+  final dynamic data;
+  final String room;
+  final int from;
+  final DateTime sentAt;
+
+  ChatRoomMessage({
+    required this.data,
+    required this.room,
+    required this.from,
+    required this.sentAt,
+  });
+
+  factory ChatRoomMessage.fromMap(Map<String, dynamic> map) {
+    return ChatRoomMessage(
+      data: map['message'],
+      room: map['room'] as String,
+      from: map['from'] as int,
+      sentAt: DateTime.fromMillisecondsSinceEpoch(map['sentAt'] as int),
+    );
+  }
+
+  @override
+  String toString() {
+    return 'ChatRoomMessage(data: $data, room: $room, from: $from, sentAt: $sentAt)';
+  }
 }
