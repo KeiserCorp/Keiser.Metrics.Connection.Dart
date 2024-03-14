@@ -552,8 +552,9 @@ class MetricsConnection {
               path: path,
             );
           } on MetricsApiError catch (error) {
-            if (error.code == 615) {
+            if (error.code == 615 || error.code == 616) {
               // 615 -> blacklisted token
+              // 616 -> invalid token
               _setAuthStatus(AuthenticationState.unauthenticated);
             }
             rethrow;
@@ -567,8 +568,10 @@ class MetricsConnection {
           _setAuthStatus(AuthenticationState.unauthenticated);
           rethrow;
         }
-      } else if (error.code == 613 && _accessToken == null) {
+      } else if (error.code == 615 ||
+          (error.code == 613 && _accessToken == null)) {
         // 613 -> UnauthorizedToken
+        // 615 -> blacklisted token
         _setAuthStatus(AuthenticationState.unauthenticated);
         rethrow;
       } else {
