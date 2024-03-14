@@ -1,3 +1,7 @@
+## 0.2.1
+
+* Fixes authenticated state when an blacklisted token error is triggered.
+
 ## 0.2.0
 
 * Adds `onChatRoomMessage` stream to listen for any "live" chat room messages.
