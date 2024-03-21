@@ -291,7 +291,13 @@ class MetricsConnection {
         () async {
           if (bodyParameters != null) {
             return _actionRest(
-                path: path, method: method, bodyParameters: bodyParameters);
+              path: path,
+              method: method,
+              bodyParameters: {
+                if (_accessToken != null) 'authorization': _accessToken,
+                ...bodyParameters,
+              },
+            );
           }
 
           if (isSocketConnected) {
@@ -436,7 +442,6 @@ class MetricsConnection {
             ? FormData.fromMap(bodyParameters)
             : null,
       );
-      _setServerStatus(ServerState.offline);
       return ResponseMessage(data: response.data);
     } on DioError catch (e) {
       if (shouldEnableErrorLogging) {
