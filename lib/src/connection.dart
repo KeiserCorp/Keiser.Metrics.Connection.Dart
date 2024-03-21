@@ -294,7 +294,8 @@ class MetricsConnection {
               path: path,
               method: method,
               bodyParameters: {
-                if (_accessToken != null) 'authorization': _accessToken,
+                if (queryParameters['authorization'] != null)
+                  'authorization': queryParameters['authorization'],
                 ...bodyParameters,
               },
             );
