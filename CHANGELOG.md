@@ -1,3 +1,7 @@
+## 0.2.2
+
+* Fixes settings sever status to offline after an HTTP request.
+
 ## 0.2.1
 
 * Fixes authenticated state when an blacklisted token error is triggered.
