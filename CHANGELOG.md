@@ -1,3 +1,7 @@
+## 0.3.0
+
+* Adds Machine JWT implementation
+
 ## 0.2.2
 
 * Fixes settings sever status to offline after an HTTP request.

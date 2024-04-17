@@ -1,6 +1,6 @@
 name: keiser_metrics_connection
 description: "Dart package for Keiser Metrics to handle both websockets and rest calls."
-version: 0.2.2
+version: 0.3.0
 repository: https://github.com/KeiserCorp/Keiser.Metrics.Connection.Dart
 
 environment:
@@ -8,6 +8,7 @@ environment:
 
 dependencies:
   dio: ">=4.0.1 <5.0.0"
+  enum_to_string: ^2.0.1
   jwt_decoder: ^2.0.1
   retry: ^3.1.2
   web_socket_channel: ^2.4.0
