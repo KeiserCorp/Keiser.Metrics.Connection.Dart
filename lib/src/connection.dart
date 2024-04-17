@@ -81,7 +81,7 @@ class MetricsConnection {
 
   Stream<ChatRoomMessage> get onChatRoomMessage => _onChatRoomMessage.stream;
 
-  SessionToken? get decodedAccesstoken =>
+  JWTToken? get decodedAccesstoken =>
       _accessToken != null ? decodeJwt(_accessToken!) : null;
 
   /// Opens the websocket and REST connections.
@@ -477,11 +477,12 @@ class MetricsConnection {
     if (_accessTokenTimer != null) {
       _accessTokenTimer!.cancel();
     }
-
-    final tokenTTL = decodedAccesstoken!.exp * 1000 -
-        DateTime.now().millisecondsSinceEpoch -
-        jwtTTLLimit;
-    _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
+    if (decodedAccesstoken!.exp != null) {
+      final tokenTTL = decodedAccesstoken!.exp! * 1000 -
+          DateTime.now().millisecondsSinceEpoch -
+          jwtTTLLimit;
+      _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
+    }
 
     if (authenticatedResponse.refreshToken != null) {
       _refreshToken = authenticatedResponse.refreshToken;
