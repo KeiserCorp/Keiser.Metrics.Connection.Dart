@@ -231,7 +231,8 @@ class MetricsConnection {
         if (parsedJson['context'] == 'response') {
           _parseResponse(ResponseMessage.fromMap(parsedJson));
         } else if (parsedJson['context'] == 'user') {
-          _onChatRoomMessage.add(ChatRoomMessage.fromMap(parsedJson));
+          final chatRoomMessage = ChatRoomMessage.fromMap(parsedJson);
+          _onChatRoomMessage.add(chatRoomMessage);
         } else if (!isSocketConnected) {
           _setConnectionState(ConnectionState.connected);
           _setServerStatus(ServerState.online);
