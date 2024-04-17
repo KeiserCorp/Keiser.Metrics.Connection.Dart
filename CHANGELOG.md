@@ -1,3 +1,7 @@
+## 0.3.1
+
+* Fixes chat room message parsing
+
 ## 0.3.0
 
 * Adds Machine JWT implementation
