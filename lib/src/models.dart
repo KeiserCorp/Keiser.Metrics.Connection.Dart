@@ -79,7 +79,7 @@ class ChatRoomMessage {
     return ChatRoomMessage(
       data: map['message'],
       room: map['room'] as String,
-      from: map['from'] as int,
+      from: int.tryParse(map['from']) ?? 0,
       sentAt: DateTime.fromMillisecondsSinceEpoch(map['sentAt'] as int),
     );
   }
