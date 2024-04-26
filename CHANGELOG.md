@@ -1,3 +1,7 @@
+## 0.4.0
+
+* Adds the parameter to override the default socket connection retry timeout.
+
 ## 0.3.1
 
 * Fixes chat room message parsing
