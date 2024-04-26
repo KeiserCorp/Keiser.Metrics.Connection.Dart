@@ -1,6 +1,16 @@
 part of keiser_metrics_connection;
 
 class MetricsConnection {
+  /// Creates a new instance of [MetricsConnection].
+  ///
+  /// [restEndpoint] is the REST endpoint for the connection.
+  /// [socketEndpoint] is the WebSocket endpoint for the connection.
+  /// [shouldEnableWebSocket] is a flag indicating whether to enable WebSocket or not.
+  /// [socketTimeout] is the timeout duration for the socket connection.
+  /// [concurrentRequestLimit] is the limit for concurrent requests.
+  /// [requestRetryLimit] is the limit for request retries.
+  /// [shouldEnableErrorLogging] is a flag indicating whether to enable error logging or not.
+  /// [socketRetryTimeout] is the timeout in milliseconds for socket retry attempts.
   MetricsConnection({
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
@@ -9,10 +19,10 @@ class MetricsConnection {
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
+    this.socketRetryTimeout,
   }) {
     open();
   }
-
   // params
   final String restEndpoint;
   final String socketEndpoint;
@@ -21,6 +31,7 @@ class MetricsConnection {
   final int requestRetryLimit;
   final Duration socketTimeout;
   final bool shouldEnableErrorLogging;
+  final int? socketRetryTimeout;
 
   // internal
   WebSocketChannel? _socket;
@@ -45,6 +56,8 @@ class MetricsConnection {
   ServerState _serverStatus = ServerState.offline;
   bool get isSocketConnected =>
       _socketConnectionState == ConnectionState.connected;
+
+  ServerState get serverStatus => _serverStatus;
 
   // streams
   final StreamController<ConnectionState> _onConnectionChange =
@@ -186,7 +199,11 @@ class MetricsConnection {
     } else if (_socketRetryAttempts >= 28) {
       return;
     }
-    _socketRetryAttempts++;
+    if (socketRetryTimeout != null) {
+      retryTimeout = socketRetryTimeout!;
+    } else {
+      _socketRetryAttempts++;
+    }
     await Future.delayed(Duration(milliseconds: retryTimeout));
     _openSocket();
   }
