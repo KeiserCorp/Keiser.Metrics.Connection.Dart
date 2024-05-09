@@ -1,3 +1,7 @@
+## 0.4.1
+
+* Fixes invalid or expired tokens from being used again.
+
 ## 0.4.0
 
 * Adds the parameter to override the default socket connection retry timeout.
