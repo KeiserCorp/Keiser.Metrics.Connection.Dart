@@ -225,6 +225,12 @@ class MetricsConnection {
   }
 
   void _setAuthStatus(AuthenticationState status) {
+    if (status == AuthenticationState.unauthenticated) {
+      _accessToken = null;
+      _refreshToken = null;
+      _accessTokenTimer?.cancel();
+      _accessTokenTimer = null;
+    }
     if (_authenticationStatus != status) {
       _authenticationStatus = status;
       _onAuthenticationStatusChange.add(status);
