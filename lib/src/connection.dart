@@ -123,6 +123,11 @@ class MetricsConnection {
     _setAuthStatus(AuthenticationState.unknown);
   }
 
+  /// Clears the internal authentication state by removing all tokens
+  void clearAuthentication() {
+    _setAuthStatus(AuthenticationState.unauthenticated);
+  }
+
   void _openSocket() async {
     if (isSocketConnected) {
       _closeSocket();
