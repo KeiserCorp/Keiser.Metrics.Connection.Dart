@@ -178,6 +178,15 @@ void main() {
         expect(authenticationState, AuthenticationState.authenticated);
       });
 
+      test('Can clear authentication state', () async {
+        connection!.clearAuthentication();
+
+        await Future.delayed(const Duration(seconds: 1));
+        expect(authenticationState, AuthenticationState.unauthenticated);
+        expect(connection!.decodedAccesstoken, isNull);
+        expect(connection!.isSocketConnected, true);
+      });
+
       test('Can close Metrics Connection', () async {
         connection!.close();
 
