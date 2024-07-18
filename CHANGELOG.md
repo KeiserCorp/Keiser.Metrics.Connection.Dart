@@ -1,3 +1,7 @@
+## 0.5.0
+
+* Adds method to clear authentication state `clearAuthentication`.
+
 ## 0.4.1
 
 * Fixes invalid or expired tokens from being used again.
