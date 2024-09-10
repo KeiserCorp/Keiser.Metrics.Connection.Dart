@@ -7,6 +7,7 @@ class MetricsApiError implements Exception {
     required this.status,
     required this.name,
     required this.message,
+    this.params,
   });
 
   String? explanation;
@@ -14,6 +15,7 @@ class MetricsApiError implements Exception {
   int status;
   String name;
   String message;
+  dynamic params;
 
   factory MetricsApiError.fromMap(Map<String, dynamic> json) => MetricsApiError(
         explanation: json["explanation"],
@@ -21,6 +23,7 @@ class MetricsApiError implements Exception {
         status: json["status"],
         name: json["name"],
         message: json["message"],
+        params: json["params"],
       );
 
   Map<String, dynamic> toMap() => {
@@ -29,11 +32,12 @@ class MetricsApiError implements Exception {
         "status": status,
         "name": name,
         "message": message,
+        "params": params,
       };
 
   @override
   String toString() {
-    return 'Error(code: $code, explanation: $explanation, status: $status,name: $name, message: $message)';
+    return 'Error(code: $code, explanation: $explanation, status: $status,name: $name, message: $message, params: $params)';
   }
 }
 
