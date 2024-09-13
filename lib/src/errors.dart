@@ -15,7 +15,7 @@ class MetricsApiError implements Exception {
   int status;
   String name;
   String message;
-  dynamic params;
+  List<String>? params;
 
   factory MetricsApiError.fromMap(Map<String, dynamic> json) => MetricsApiError(
         explanation: json["explanation"],
@@ -23,7 +23,7 @@ class MetricsApiError implements Exception {
         status: json["status"],
         name: json["name"],
         message: json["message"],
-        params: json["params"],
+        params: _convertParamsToStringList(json["params"]),
       );
 
   Map<String, dynamic> toMap() => {
@@ -34,6 +34,18 @@ class MetricsApiError implements Exception {
         "message": message,
         "params": params,
       };
+
+    static List<String>? _convertParamsToStringList(dynamic params) {
+    if (params is List<String>) {
+      return params;
+    } else if (params is List) {
+      return params.map((e) => e.toString()).toList();
+    } else if (params is String) {
+      return [params];
+    } else {
+      return null;
+    }
+  }
 
   @override
   String toString() {
