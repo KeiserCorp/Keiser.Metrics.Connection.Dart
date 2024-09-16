@@ -1,3 +1,7 @@
+## 0.6.0
+
+* Updates error model to include `params` field.
+
 ## 0.5.0
 
 * Adds method to clear authentication state `clearAuthentication`.
