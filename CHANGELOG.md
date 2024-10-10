@@ -1,3 +1,7 @@
+## 0.7.0
+
+* Updates Dio dependency to v5.7.0
+
 ## 0.6.0
 
 * Updates error model to include `params` field.
