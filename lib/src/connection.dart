@@ -164,9 +164,9 @@ class MetricsConnection {
     _dio ??= Dio(
       BaseOptions(
         baseUrl: restEndpoint,
-        connectTimeout: 10000,
-        sendTimeout: 15000,
-        receiveTimeout: 45000,
+        connectTimeout: Duration(milliseconds: 10000),
+        sendTimeout: Duration(milliseconds: 15000),
+        receiveTimeout: Duration(milliseconds: 45000),
       ),
     );
     _isDioAvailable = true;
@@ -347,8 +347,8 @@ class MetricsConnection {
         maxDelay: const Duration(seconds: 5),
         retryIf: (e) => e is! MetricsApiError && e is! UnexpectedError,
       );
-    } on DioError catch (error) {
-      throw UnexpectedError(message: error.message);
+    } on DioException catch (error) {
+      throw UnexpectedError(message: error.message ?? 'Unexpected Error');
     } catch (error) {
       if (shouldEnableErrorLogging) {
         print(
@@ -473,26 +473,27 @@ class MetricsConnection {
             : null,
       );
       return ResponseMessage(data: response.data);
-    } on DioError catch (e) {
+    } on DioException catch (e) {
       if (shouldEnableErrorLogging) {
         print(e.message);
       }
-      if (e.type == DioErrorType.connectTimeout) {
+      if (e.type == DioExceptionType.connectionTimeout) {
         _setServerStatus(ServerState.offline);
-      } else if (e.type == DioErrorType.other) {
-        if (e.message.contains('Connection Failed') ||
-            e.message.contains('Connection failed') ||
-            e.message.contains('Connection closed') ||
-            e.message.contains('Connection refused')) {
+      } else if (e.type == DioExceptionType.unknown && e.message != null) {
+        if (e.message!.contains('Connection Failed') ||
+            e.message!.contains('Connection failed') ||
+            e.message!.contains('Connection closed') ||
+            e.message!.contains('Connection refused')) {
           _setServerStatus(ServerState.offline);
         }
-      } else if (e.type == DioErrorType.response ||
+      } else if (e.type == DioExceptionType.badResponse ||
           (e.response != null && e.response!.data is Map<String, dynamic>)) {
         if ((e.response!.data as Map<String, dynamic>).containsKey('error')) {
           throw MetricsApiError.fromMap(e.response!.data['error']);
         }
 
-        if (e.message.contains('Http status error [503]')) {
+        if (e.message != null &&
+            e.message!.contains('Http status error [503]')) {
           _setServerStatus(ServerState.offline);
         }
       }
