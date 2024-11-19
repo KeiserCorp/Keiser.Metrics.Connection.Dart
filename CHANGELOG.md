@@ -1,3 +1,7 @@
+## 0.7.2
+
+* Fixes issue related to Dio update
+
 ## 0.7.1
 
 * Fixes issue related to Dio update
