@@ -280,7 +280,6 @@ class MetricsConnection {
 
   void _requestServerHealth() async {
     try {
-      // TODO - Ensure all servers have core:status action
       await _enqueue(
         path: '/status',
         action: 'core:status',
@@ -474,16 +473,27 @@ class MetricsConnection {
       );
       return ResponseMessage(data: response.data);
     } on DioException catch (e) {
+      String message = '';
+
+      if (e.message != null) {
+        message = e.message!;
+      } else if (e.error is HttpException) {
+        final error = e.error as HttpException;
+        message = error.message;
+      }
+
       if (shouldEnableErrorLogging) {
-        print(e.message);
+        print(message);
       }
       if (e.type == DioExceptionType.connectionTimeout) {
         _setServerStatus(ServerState.offline);
-      } else if (e.type == DioExceptionType.unknown && e.message != null) {
-        if (e.message!.contains('Connection Failed') ||
-            e.message!.contains('Connection failed') ||
-            e.message!.contains('Connection closed') ||
-            e.message!.contains('Connection refused')) {
+      } else if (e.type == DioExceptionType.unknown) {
+        if (message.contains('Connection Failed') ||
+            message.contains('Connection failed') ||
+            message.contains('Connection closed') ||
+            message.contains('Connection Closed') ||
+            message.contains('Connection Refused') ||
+            message.contains('Connection refused')) {
           _setServerStatus(ServerState.offline);
         }
       } else if (e.type == DioExceptionType.badResponse ||
