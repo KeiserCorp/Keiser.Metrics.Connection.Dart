@@ -2,6 +2,7 @@ library keiser_metrics_connection;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:enum_to_string/enum_to_string.dart';

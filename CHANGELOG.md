@@ -1,3 +1,7 @@
+## 0.7.1
+
+* Fixes issue related to Dio update
+
 ## 0.7.0
 
 * Updates Dio dependency to v5.7.0
