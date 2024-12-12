@@ -1,3 +1,7 @@
+## 0.7.3
+
+* Fixes missing error exception type `connectionError`
+
 ## 0.7.2
 
 * Fixes issue related to Dio update
