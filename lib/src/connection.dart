@@ -487,7 +487,8 @@ class MetricsConnection {
       }
       if (e.type == DioExceptionType.connectionTimeout) {
         _setServerStatus(ServerState.offline);
-      } else if (e.type == DioExceptionType.unknown) {
+      } else if (e.type == DioExceptionType.unknown ||
+          e.type == DioExceptionType.connectionError) {
         if (message.contains('Connection Failed') ||
             message.contains('Connection failed') ||
             message.contains('Connection closed') ||
