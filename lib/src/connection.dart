@@ -173,8 +173,9 @@ class MetricsConnection {
   }
 
   void _closeRest() {
-    _dio?.close();
+    _dio?.close(force: true);
     _isDioAvailable = false;
+    _dio = null;
     _setServerStatus(ServerState.offline);
   }
 
