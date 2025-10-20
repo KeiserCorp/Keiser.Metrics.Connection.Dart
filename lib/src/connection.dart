@@ -173,8 +173,9 @@ class MetricsConnection {
   }
 
   void _closeRest() {
-    _dio?.close();
+    _dio?.close(force: true);
     _isDioAvailable = false;
+    _dio = null;
     _setServerStatus(ServerState.offline);
   }
 
@@ -499,10 +500,11 @@ class MetricsConnection {
         }
       } else if (e.type == DioExceptionType.badResponse ||
           (e.response != null && e.response!.data is Map<String, dynamic>)) {
-        if ((e.response!.data as Map<String, dynamic>).containsKey('error')) {
+        if (e.response != null &&
+            e.response!.data is Map<String, dynamic> &&
+            e.response!.data.containsKey('error')) {
           throw MetricsApiError.fromMap(e.response!.data['error']);
         }
-
         if (e.message != null &&
             e.message!.contains('Http status error [503]')) {
           _setServerStatus(ServerState.offline);
