@@ -1,12 +1,14 @@
-name: Development 
+name: Test 
 
 on:
   push:
     branches:
-      - development 
+      - development
+      - v*
   pull_request:
     branches:
       - development
+      - v*
     types:
       - opened
       - reopened
