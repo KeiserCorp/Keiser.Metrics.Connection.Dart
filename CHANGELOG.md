@@ -1,3 +1,8 @@
+## 0.7.4
+
+* Improves error handling by ensuring both null and type checks are performed before accessing 'error' in the response data. This prevents potential runtime exceptions when handling API errors. (Issue [#19](https://github.com/KeiserCorp/Keiser.Metrics.Connection.Dart/issues/19))
+* Fixes reconnect errors after internet is lost (Issue [#17](https://github.com/KeiserCorp/Keiser.Metrics.Connection.Dart/issues/17))
+
 ## 0.7.3
 
 * Fixes missing error exception type `connectionError`
