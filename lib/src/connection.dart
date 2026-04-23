@@ -561,6 +561,12 @@ class MetricsConnection {
     await _keepAlive(shouldThrow: true);
   }
 
+  void initializeAuthenticatedMachineSessionToken({
+    required String token,
+  }) {
+    _updateTokens(AuthenticatedResponse(accessToken: token));
+  }
+
   /// This method makes a request to a desired route.
   Future<ResponseMessage> action({
     required String path,
