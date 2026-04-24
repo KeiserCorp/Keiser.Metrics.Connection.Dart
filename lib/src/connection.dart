@@ -561,6 +561,20 @@ class MetricsConnection {
     await _keepAlive(shouldThrow: true);
   }
 
+  /// Initializes an authenticated machine session directly from the provided token.
+  ///
+  /// Unlike [initializeAuthenticatedSession], this method:
+  /// - Does not validate the token with the server via keep-alive
+  /// - Does not emit an [AuthenticationState.authenticated] event
+  ///
+  /// Use this for machine initialization tokens that are
+  /// device-bound and do not require the standard user session flow.
+  void initializeAuthenticatedMachineSessionToken({
+    required String token,
+  }) {
+    _updateTokens(AuthenticatedResponse(accessToken: token));
+  }
+
   /// This method makes a request to a desired route.
   Future<ResponseMessage> action({
     required String path,

@@ -5,6 +5,13 @@ JWTToken decodeJwt(String token) {
   if (jwtToken.containsKey('role') && jwtToken['role'] == 'machine') {
     return MachineSessionToken.fromMap(jwtToken);
   }
+  if (jwtToken.containsKey('type')) {
+    if (jwtToken['type'] == 'machineInitialization') {
+      return MachineInitializationToken.fromMap(jwtToken);
+    } else if (jwtToken['type'] == 'machineSession') {
+      return CloudMachineSessionToken.fromMap(jwtToken);
+    }
+  }
   return SessionToken.fromMap(jwtToken);
 }
 
@@ -12,6 +19,8 @@ enum TokenType {
   access,
   refresh,
   machine,
+  machineInitialization,
+  machineSession,
 }
 
 class JWTToken {
@@ -115,6 +124,53 @@ class JWTMachine extends JWTUser {
 
   factory JWTMachine.fromMap(Map<String, dynamic> json) => JWTMachine(
         id: json['id'],
+      );
+}
+
+class MachineInitializationToken extends JWTToken {
+  MachineInitializationToken(
+      {required super.iss,
+      required super.jti,
+      required super.type,
+      required this.facilityId,
+      required this.facilityStrengthMachineId,
+      super.exp});
+
+  final int facilityId;
+  final int facilityStrengthMachineId;
+
+  factory MachineInitializationToken.fromMap(Map<String, dynamic> json) =>
+      MachineInitializationToken(
+        facilityId: json['facilityId'],
+        facilityStrengthMachineId: json['facilityStrengthMachineId'],
+        iss: json['iss'],
+        jti: json['jti'],
+        type: EnumToString.fromString(TokenType.values, json['type'])!,
+      );
+}
+
+class CloudMachineSessionToken extends MachineInitializationToken {
+  CloudMachineSessionToken({
+    required super.iss,
+    required super.jti,
+    required super.type,
+    required super.facilityId,
+    required super.facilityStrengthMachineId,
+    required this.iat,
+    super.exp,
+  });
+
+  final int iat;
+
+  factory CloudMachineSessionToken.fromMap(Map<String, dynamic> json) =>
+      CloudMachineSessionToken(
+        facilityId: json['facilityId'],
+        facilityStrengthMachineId: json['facilityStrengthMachineId'],
+        iss: json['iss'],
+        jti: json['jti'],
+        type: EnumToString.fromString(TokenType.values, json['type'])!,
+        iat: json['iat'],
+        exp: json['exp'],
       );
 }
 
