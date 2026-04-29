@@ -472,6 +472,7 @@ class MetricsConnection {
             ? FormData.fromMap(bodyParameters)
             : null,
       );
+      _setServerStatus(ServerState.online);
       return ResponseMessage(data: response.data);
     } on DioException catch (e) {
       String message = '';
