@@ -1,3 +1,7 @@
+## 1.0.1
+
+* Sets server status to online on successful request
+
 ## 1.0.0
 
 * Adds support for new server tokens
