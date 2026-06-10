@@ -15,7 +15,8 @@ class MetricsConnection {
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
     this.shouldEnableWebSocket = defaultShouldEnableWebSocket,
-    this.socketTimeout = defaultSocketTimeout,
+    this.socketTimeout = defaultSocketConnectionTimeout,
+    this.socketMessageTimeout = defaultSocketMessageTimeout,
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
@@ -30,6 +31,7 @@ class MetricsConnection {
   final int concurrentRequestLimit;
   final int requestRetryLimit;
   final Duration socketTimeout;
+  final Duration socketMessageTimeout;
   final bool shouldEnableErrorLogging;
   final int? socketRetryTimeout;
 
@@ -445,8 +447,14 @@ class MetricsConnection {
     _completers[_lastMessageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future;
+      final response = await completer.future.timeout(socketMessageTimeout);
       return response;
+    } on TimeoutException catch (_) {
+      if (_completers.containsKey(_lastMessageId)) {
+        _completers.remove(_lastMessageId);
+      }
+      _setConnectionState(ConnectionState.disconnected);
+      throw UnexpectedError(message: 'Socket message timeout');
     } catch (error) {
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
@@ -484,20 +492,21 @@ class MetricsConnection {
         message = error.message;
       }
 
+      message = message.toLowerCase();
       if (shouldEnableErrorLogging) {
         print(message);
       }
       if (e.type == DioExceptionType.connectionTimeout) {
-        _setServerStatus(ServerState.offline);
-      } else if (e.type == DioExceptionType.unknown ||
-          e.type == DioExceptionType.connectionError) {
-        if (message.contains('Connection Failed') ||
-            message.contains('Connection failed') ||
-            message.contains('Connection closed') ||
-            message.contains('Connection Closed') ||
-            message.contains('Connection Refused') ||
-            message.contains('Connection refused')) {
-          _setServerStatus(ServerState.offline);
+        _closeRest();
+      } else if (e.type == DioExceptionType.connectionError) {
+        _closeRest();
+      } else if (e.type == DioExceptionType.unknown) {
+        if (message.contains('connection failed') ||
+            message.contains('connection closed') ||
+            message.contains('connection closed') ||
+            message.contains('connection refused') ||
+            message.contains('connection refused')) {
+          _closeRest();
         }
       } else if (e.type == DioExceptionType.badResponse ||
           (e.response != null && e.response!.data is Map<String, dynamic>)) {
@@ -508,7 +517,7 @@ class MetricsConnection {
         }
         if (e.message != null &&
             e.message!.contains('Http status error [503]')) {
-          _setServerStatus(ServerState.offline);
+          _closeRest();
         }
       }
       rethrow;
