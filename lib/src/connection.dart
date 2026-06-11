@@ -15,7 +15,8 @@ class MetricsConnection {
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
     this.shouldEnableWebSocket = defaultShouldEnableWebSocket,
-    this.socketTimeout = defaultSocketTimeout,
+    this.socketTimeout = defaultSocketConnectionTimeout,
+    this.socketMessageTimeout = defaultSocketMessageTimeout,
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
@@ -30,6 +31,7 @@ class MetricsConnection {
   final int concurrentRequestLimit;
   final int requestRetryLimit;
   final Duration socketTimeout;
+  final Duration socketMessageTimeout;
   final bool shouldEnableErrorLogging;
   final int? socketRetryTimeout;
 
@@ -120,7 +122,28 @@ class MetricsConnection {
     _shouldRetrySocketConnection = false;
     _closeSocket();
     _closeRest();
+    _drainPendingRequests();
     _setAuthStatus(AuthenticationState.unknown);
+  }
+
+  /// Error-completes every in-flight request so awaiters are released instead
+  /// of hanging forever once the connection is torn down. Covers both the
+  /// socket completers map and the queued REST/socket requests.
+  void _drainPendingRequests() {
+    final error = UnexpectedError(message: 'Connection closed');
+    for (final completer in _completers.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    _completers.clear();
+
+    for (final request in _requestQueue) {
+      if (!request.completer.isCompleted) {
+        request.completer.completeError(error);
+      }
+    }
+    _requestQueue.clear();
   }
 
   /// Clears the internal authentication state by removing all tokens
@@ -227,6 +250,9 @@ class MetricsConnection {
     if (_serverStatus != status) {
       _serverStatus = status;
       _onServerStatusChange.add(status);
+      if (status == ServerState.offline) {
+        close();
+      }
     }
   }
 
@@ -319,6 +345,10 @@ class MetricsConnection {
       response = await retry(
         () async {
           if (bodyParameters != null) {
+            if (!_isDioAvailable) {
+              _setServerStatus(ServerState.offline);
+              throw UnexpectedError(message: 'Internet or Server is offline');
+            }
             return _actionRest(
               path: path,
               method: method,
@@ -433,8 +463,9 @@ class MetricsConnection {
   ) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
+    final messageId = _lastMessageId;
     final args = {
-      'messageId': _lastMessageId,
+      'messageId': messageId,
       'event': 'action',
       'params': {
         'action': action,
@@ -442,11 +473,17 @@ class MetricsConnection {
       },
     };
 
-    _completers[_lastMessageId] = completer;
+    _completers[messageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future;
+      final response = await completer.future.timeout(socketMessageTimeout);
       return response;
+    } on TimeoutException catch (_) {
+      if (_completers.containsKey(messageId)) {
+        _completers.remove(messageId);
+      }
+      _setConnectionState(ConnectionState.disconnected);
+      throw UnexpectedError(message: 'Socket message timeout');
     } catch (error) {
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
@@ -484,20 +521,19 @@ class MetricsConnection {
         message = error.message;
       }
 
+      message = message.toLowerCase();
       if (shouldEnableErrorLogging) {
         print(message);
       }
       if (e.type == DioExceptionType.connectionTimeout) {
-        _setServerStatus(ServerState.offline);
-      } else if (e.type == DioExceptionType.unknown ||
-          e.type == DioExceptionType.connectionError) {
-        if (message.contains('Connection Failed') ||
-            message.contains('Connection failed') ||
-            message.contains('Connection closed') ||
-            message.contains('Connection Closed') ||
-            message.contains('Connection Refused') ||
-            message.contains('Connection refused')) {
-          _setServerStatus(ServerState.offline);
+        _closeRest();
+      } else if (e.type == DioExceptionType.connectionError) {
+        _closeRest();
+      } else if (e.type == DioExceptionType.unknown) {
+        if (message.contains('connection failed') ||
+            message.contains('connection closed') ||
+            message.contains('connection refused')) {
+          _closeRest();
         }
       } else if (e.type == DioExceptionType.badResponse ||
           (e.response != null && e.response!.data is Map<String, dynamic>)) {
@@ -508,7 +544,7 @@ class MetricsConnection {
         }
         if (e.message != null &&
             e.message!.contains('Http status error [503]')) {
-          _setServerStatus(ServerState.offline);
+          _closeRest();
         }
       }
       rethrow;
@@ -655,8 +691,9 @@ class MetricsConnection {
   }) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
+    final messageId = _lastMessageId;
     final args = {
-      'messageId': _lastMessageId,
+      'messageId': messageId,
       'event': 'say',
       'room': room,
       'message': {
@@ -665,12 +702,17 @@ class MetricsConnection {
       },
     };
 
-    _completers[_lastMessageId] = completer;
+    _completers[messageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future;
+      final response = await completer.future.timeout(socketMessageTimeout);
       return response;
+    } on TimeoutException catch (_) {
+      _completers.remove(messageId);
+      _setConnectionState(ConnectionState.disconnected);
+      throw UnexpectedError(message: 'Socket message timeout');
     } catch (error) {
+      _completers.remove(messageId);
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
       }
