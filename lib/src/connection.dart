@@ -442,8 +442,9 @@ class MetricsConnection {
   ) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
+    final messageId = _lastMessageId;
     final args = {
-      'messageId': _lastMessageId,
+      'messageId': messageId,
       'event': 'action',
       'params': {
         'action': action,
@@ -451,14 +452,14 @@ class MetricsConnection {
       },
     };
 
-    _completers[_lastMessageId] = completer;
+    _completers[messageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
       final response = await completer.future.timeout(socketMessageTimeout);
       return response;
     } on TimeoutException catch (_) {
-      if (_completers.containsKey(_lastMessageId)) {
-        _completers.remove(_lastMessageId);
+      if (_completers.containsKey(messageId)) {
+        _completers.remove(messageId);
       }
       _setConnectionState(ConnectionState.disconnected);
       throw UnexpectedError(message: 'Socket message timeout');
@@ -510,8 +511,6 @@ class MetricsConnection {
       } else if (e.type == DioExceptionType.unknown) {
         if (message.contains('connection failed') ||
             message.contains('connection closed') ||
-            message.contains('connection closed') ||
-            message.contains('connection refused') ||
             message.contains('connection refused')) {
           _closeRest();
         }
