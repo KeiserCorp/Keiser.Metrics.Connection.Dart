@@ -202,6 +202,19 @@ class MetricsConnection {
     _setServerStatus(ServerState.offline);
   }
 
+  /// A single REST request failing with a connection-class error must not
+  /// declare the whole server offline while the websocket is still healthy:
+  /// `_closeRest` flips [ServerState.offline], which `close()`s the socket
+  /// and forces consumers into a full reconnect/re-auth cycle. Only treat a
+  /// REST failure as server-offline when there is no connected socket left
+  /// to vouch for the server.
+  void _handleRestConnectionFailure() {
+    if (isSocketConnected) {
+      return;
+    }
+    _closeRest();
+  }
+
   void _onSocketError(error) {
     _setConnectionState(ConnectionState.disconnected);
     if (shouldEnableErrorLogging) {
@@ -346,8 +359,15 @@ class MetricsConnection {
         () async {
           if (bodyParameters != null) {
             if (!_isDioAvailable) {
-              _setServerStatus(ServerState.offline);
-              throw UnexpectedError(message: 'Internet or Server is offline');
+              // Body requests can only travel over REST. If the socket is
+              // still connected the server is reachable, so lazily rebuild
+              // the REST client instead of declaring the server offline.
+              if (isSocketConnected) {
+                _openRest();
+              } else {
+                _setServerStatus(ServerState.offline);
+                throw UnexpectedError(message: 'Internet or Server is offline');
+              }
             }
             return _actionRest(
               path: path,
@@ -492,6 +512,16 @@ class MetricsConnection {
     }
   }
 
+  /// A [MultipartFile] is single-use: once a request body has been sent the
+  /// file is finalized and re-sending it throws. The retry wrapper around
+  /// [_actionRest] re-invokes this builder per attempt, so hand Dio a clone
+  /// and keep the caller's original un-finalized.
+  Map<String, dynamic> _cloneMultipartValues(Map<String, dynamic> body) =>
+      body.map(
+        (key, value) =>
+            MapEntry(key, value is MultipartFile ? value.clone() : value),
+      );
+
   Future<ResponseMessage> _actionRest({
     required String path,
     required dynamic method,
@@ -506,7 +536,7 @@ class MetricsConnection {
             ? queryParameters
             : null,
         data: bodyParameters != null && bodyParameters.isNotEmpty
-            ? FormData.fromMap(bodyParameters)
+            ? FormData.fromMap(_cloneMultipartValues(bodyParameters))
             : null,
       );
       _setServerStatus(ServerState.online);
@@ -526,14 +556,14 @@ class MetricsConnection {
         print(message);
       }
       if (e.type == DioExceptionType.connectionTimeout) {
-        _closeRest();
+        _handleRestConnectionFailure();
       } else if (e.type == DioExceptionType.connectionError) {
-        _closeRest();
+        _handleRestConnectionFailure();
       } else if (e.type == DioExceptionType.unknown) {
         if (message.contains('connection failed') ||
             message.contains('connection closed') ||
             message.contains('connection refused')) {
-          _closeRest();
+          _handleRestConnectionFailure();
         }
       } else if (e.type == DioExceptionType.badResponse ||
           (e.response != null && e.response!.data is Map<String, dynamic>)) {
@@ -544,7 +574,7 @@ class MetricsConnection {
         }
         if (e.message != null &&
             e.message!.contains('Http status error [503]')) {
-          _closeRest();
+          _handleRestConnectionFailure();
         }
       }
       rethrow;
