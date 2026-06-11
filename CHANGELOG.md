@@ -1,3 +1,13 @@
+## 1.1.0
+
+* Keeps server online when a REST request fails with a connection error but the websocket is still connected, avoiding unnecessary reconnect and re-auth cycles
+* Rebuilds the REST client lazily for body requests when Dio is unavailable but the socket is still connected
+* Drains pending requests on disconnect so callers receive an error immediately instead of hanging indefinitely
+* Fixes race condition in websocket message ID tracking
+* Adds per-message socket timeout via `socketMessageTimeout` (default 45 seconds); renames `defaultSocketTimeout` to `defaultSocketConnectionTimeout`
+* Automatically closes the connection when server status transitions to offline
+* Fixes multipart upload retries by cloning `MultipartFile` values before each attempt
+
 ## 1.0.1
 
 * Sets server status to online on successful request
