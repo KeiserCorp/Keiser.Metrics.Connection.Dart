@@ -122,7 +122,28 @@ class MetricsConnection {
     _shouldRetrySocketConnection = false;
     _closeSocket();
     _closeRest();
+    _drainPendingRequests();
     _setAuthStatus(AuthenticationState.unknown);
+  }
+
+  /// Error-completes every in-flight request so awaiters are released instead
+  /// of hanging forever once the connection is torn down. Covers both the
+  /// socket completers map and the queued REST/socket requests.
+  void _drainPendingRequests() {
+    final error = UnexpectedError(message: 'Connection closed');
+    for (final completer in _completers.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    _completers.clear();
+
+    for (final request in _requestQueue) {
+      if (!request.completer.isCompleted) {
+        request.completer.completeError(error);
+      }
+    }
+    _requestQueue.clear();
   }
 
   /// Clears the internal authentication state by removing all tokens
@@ -670,8 +691,9 @@ class MetricsConnection {
   }) async {
     final completer = Completer<ResponseMessage>();
     _lastMessageId++;
+    final messageId = _lastMessageId;
     final args = {
-      'messageId': _lastMessageId,
+      'messageId': messageId,
       'event': 'say',
       'room': room,
       'message': {
@@ -680,12 +702,17 @@ class MetricsConnection {
       },
     };
 
-    _completers[_lastMessageId] = completer;
+    _completers[messageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future;
+      final response = await completer.future.timeout(socketMessageTimeout);
       return response;
+    } on TimeoutException catch (_) {
+      _completers.remove(messageId);
+      _setConnectionState(ConnectionState.disconnected);
+      throw UnexpectedError(message: 'Socket message timeout');
     } catch (error) {
+      _completers.remove(messageId);
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
       }
