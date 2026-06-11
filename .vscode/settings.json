@@ -1,32 +1,33 @@
 {
-    "cSpell.words": [
-        "Accesstoken",
-        "cupertino",
-        "Enqueueable",
-        "horiz",
-        "icomoon",
-        "keiser",
-        "refreshable",
-        "unawaited",
-        "Unparseable",
-        "vsync"
-    ],
-    "files.associations": {
-        "*.arb": "json"
-    },
-    "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": {
-        "source.fixAll": "explicit",
-        "source.addMissingImports": "explicit",
-        "source.organizeImports": "explicit"
-    },
-    "editor.defaultFormatter": "Dart-Code.dart-code",
-    "[json]": {
-        "editor.defaultFormatter": "vscode.json-language-features"
-    },
-    "cmake.configureOnOpen": false,
-    "dart.previewFlutterUiGuides": true,
-    "dart.previewFlutterUiGuidesCustomTracking": true,
-    "java.configuration.updateBuildConfiguration": "interactive",
-    "dart.lineLength": 80
+  "cSpell.words": [
+    "Accesstoken",
+    "cupertino",
+    "Enqueueable",
+    "horiz",
+    "icomoon",
+    "keiser",
+    "refreshable",
+    "unawaited",
+    "Unparseable",
+    "vsync"
+  ],
+  "files.associations": {
+    "*.arb": "json"
+  },
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.addMissingImports": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "editor.defaultFormatter": "Dart-Code.dart-code",
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "cmake.configureOnOpen": false,
+  "dart.previewFlutterUiGuides": true,
+  "dart.previewFlutterUiGuidesCustomTracking": true,
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "dart.lineLength": 80,
+  "dart.flutterSdkPath": ".fvm/versions/3.27.4"
 }
