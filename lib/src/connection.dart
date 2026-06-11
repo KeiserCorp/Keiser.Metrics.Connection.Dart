@@ -229,6 +229,9 @@ class MetricsConnection {
     if (_serverStatus != status) {
       _serverStatus = status;
       _onServerStatusChange.add(status);
+      if (status == ServerState.offline) {
+        close();
+      }
     }
   }
 
@@ -321,6 +324,10 @@ class MetricsConnection {
       response = await retry(
         () async {
           if (bodyParameters != null) {
+            if (!_isDioAvailable) {
+              _setServerStatus(ServerState.offline);
+              throw UnexpectedError(message: 'Internet or Server is offline');
+            }
             return _actionRest(
               path: path,
               method: method,
