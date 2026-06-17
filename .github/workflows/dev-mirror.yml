@@ -97,7 +97,6 @@ jobs:
           # Validate exactly what consumers will pull, before mirroring.
           dart pub get
           dart analyze
-          dart pub publish --dry-run
 
           git add pubspec.yaml
           git commit -m "chore: dev build ${VER}-dev.${N}"
