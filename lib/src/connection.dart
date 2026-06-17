@@ -49,6 +49,7 @@ class MetricsConnection {
   String? _accessToken;
   String? _refreshToken;
   Timer? _accessTokenTimer;
+  Timer? _inactivityTimer;
   bool _isRefreshTokenInUse = false;
   StreamSubscription? _socketSubscription;
 
@@ -160,11 +161,11 @@ class MetricsConnection {
     _shouldRetrySocketConnection = true;
     _socket = IOWebSocketChannel.connect(
       Uri.parse(socketEndpoint),
-      pingInterval: const Duration(seconds: 30),
       connectTimeout: socketTimeout,
     );
     try {
       await _socket!.ready;
+      _resetInactivityTimer();
       _socketSubscription = _socket!.stream.listen(
         _onSocketMessage,
         onError: _onSocketError,
@@ -180,12 +181,24 @@ class MetricsConnection {
   }
 
   void _closeSocket() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
     _socketSubscription?.cancel();
     _socketSubscription = null;
     _socket?.sink.close(socket_status.normalClosure);
     _socket = null;
     _setConnectionState(ConnectionState.disconnected);
     _drainSocket();
+  }
+
+  void _resetInactivityTimer() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = Timer(const Duration(seconds: 75), () {
+      if (shouldEnableErrorLogging) {
+        print('Socket inactivity timeout');
+      }
+      _onSocketDone();
+    });
   }
 
   void _openRest() {
@@ -290,6 +303,7 @@ class MetricsConnection {
   }
 
   void _onSocketMessage(dynamic data) {
+    _resetInactivityTimer();
     try {
       final parsedJson = jsonDecode(data);
       if (parsedJson is String) {
