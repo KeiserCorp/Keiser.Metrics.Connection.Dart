@@ -1,0 +1,106 @@
+name: dev-mirror
+
+# Mirrors the current version branch (v*.*.*) to a `dev/v{VER}` branch with a
+# pre-release version `{VER}-dev.{N}` stamped into pubspec.yaml, so downstream
+# apps can pin this package by git ref and test it before it ships to pub.dev.
+# The production publish flow in publish.yml is untouched.
+#
+# Consume a dev build from another package:
+#   dependencies:
+#     keiser_metrics_connection:
+#       git:
+#         url: https://github.com/KeiserCorp/Keiser.Metrics.Connection.Dart.git
+#         ref: dev/v1.2.0   # the dev branch this workflow creates
+
+on:
+  push:
+    branches:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DART_VERSION: "3.0.6"
+
+jobs:
+  mirror-dev:
+    name: Mirror Dev Branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------- Resolve version from branch name ----------
+      - name: Resolve version from branch name
+        id: ver
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Branch '$GITHUB_REF_NAME' is not v<major>.<minor>.<patch>; refusing to mirror." >&2
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "dev_branch=dev/v$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved VER=$VER  dev_branch=dev/v$VER"
+
+      # ---------- Compute next dev build number N ----------
+      - name: Compute next dev build number N
+        id: devn
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+          DEV_BRANCH: ${{ steps.ver.outputs.dev_branch }}
+        run: |
+          set -euo pipefail
+          # Derive N from the version already stamped on the existing dev branch.
+          # The first dev build for a given version starts at 1.
+          n=1
+          if git fetch origin "${DEV_BRANCH}" 2>/dev/null; then
+            prev=$(git show "origin/${DEV_BRANCH}:pubspec.yaml" 2>/dev/null \
+                     | sed -n 's/^version:[[:space:]]*//p' | head -n1 || true)
+            # prev looks like X.Y.Z-dev.K
+            if [[ "$prev" =~ ^${VER}-dev\.([0-9]+)$ ]]; then
+              n=$(( ${BASH_REMATCH[1]} + 1 ))
+            fi
+          fi
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "Next dev build number: $n"
+
+      # ---------- Set up Dart ----------
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ env.DART_VERSION }}
+
+      # ---------- Stamp version, validate, mirror ----------
+      - name: Mirror to dev branch
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+          N: ${{ steps.devn.outputs.n }}
+          DEV_BRANCH: ${{ steps.ver.outputs.dev_branch }}
+        run: |
+          set -euo pipefail
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          # Branch off the current commit so the dev branch carries the real source.
+          git checkout -B "${DEV_BRANCH}"
+
+          # Stamp the pre-release version so consumers can see which dev build they pin.
+          sed -i "s/^version:.*/version: ${VER}-dev.${N}/" pubspec.yaml
+
+          # Validate exactly what consumers will pull, before mirroring.
+          dart pub get
+          dart analyze
+          dart pub publish --dry-run
+
+          git add pubspec.yaml
+          git commit -m "chore: dev build ${VER}-dev.${N}"
+          git push --force origin "${DEV_BRANCH}"
+
+          echo "Mirrored ${GITHUB_REF_NAME} -> ${DEV_BRANCH} as ${VER}-dev.${N}"
