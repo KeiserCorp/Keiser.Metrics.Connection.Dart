@@ -36,7 +36,7 @@ class MetricsConnection {
   final int? socketRetryTimeout;
 
   // internal
-  WebSocketChannel? _socket;
+  IOWebSocketChannel? _socket;
   Dio? _dio;
   int _lastMessageId = 0;
   int _socketRetryAttempts = 0;
@@ -122,8 +122,17 @@ class MetricsConnection {
     _shouldRetrySocketConnection = false;
     _closeSocket();
     _closeRest();
-    _drainPendingRequests();
     _setAuthStatus(AuthenticationState.unknown);
+  }
+
+  void _drainSocket() {
+    final error = UnexpectedError(message: 'Socket connection closed');
+    for (final completer in _completers.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    _completers.clear();
   }
 
   /// Error-completes every in-flight request so awaiters are released instead
@@ -131,13 +140,6 @@ class MetricsConnection {
   /// socket completers map and the queued REST/socket requests.
   void _drainPendingRequests() {
     final error = UnexpectedError(message: 'Connection closed');
-    for (final completer in _completers.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(error);
-      }
-    }
-    _completers.clear();
-
     for (final request in _requestQueue) {
       if (!request.completer.isCompleted) {
         request.completer.completeError(error);
@@ -156,11 +158,13 @@ class MetricsConnection {
       _closeSocket();
     }
     _shouldRetrySocketConnection = true;
-    _socket = WebSocketChannel.connect(
+    _socket = IOWebSocketChannel.connect(
       Uri.parse(socketEndpoint),
+      pingInterval: const Duration(seconds: 30),
+      connectTimeout: socketTimeout,
     );
     try {
-      await _socket!.ready.timeout(socketTimeout);
+      await _socket!.ready;
       _socketSubscription = _socket!.stream.listen(
         _onSocketMessage,
         onError: _onSocketError,
@@ -181,6 +185,7 @@ class MetricsConnection {
     _socket?.sink.close(socket_status.normalClosure);
     _socket = null;
     _setConnectionState(ConnectionState.disconnected);
+    _drainSocket();
   }
 
   void _openRest() {
@@ -200,6 +205,7 @@ class MetricsConnection {
     _isDioAvailable = false;
     _dio = null;
     _setServerStatus(ServerState.offline);
+    _drainPendingRequests();
   }
 
   /// A single REST request failing with a connection-class error must not
@@ -217,6 +223,7 @@ class MetricsConnection {
 
   void _onSocketError(error) {
     _setConnectionState(ConnectionState.disconnected);
+    _onSocketDone();
     if (shouldEnableErrorLogging) {
       print('Socket Error: $error');
     }

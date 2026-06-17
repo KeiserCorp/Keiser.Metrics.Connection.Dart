@@ -9,7 +9,7 @@ import 'package:enum_to_string/enum_to_string.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:retry/retry.dart';
 import 'package:web_socket_channel/status.dart' as socket_status;
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
 import 'src/internal.dart';
 
