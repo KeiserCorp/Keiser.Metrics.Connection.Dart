@@ -327,7 +327,7 @@ class MetricsConnection {
 
   Future<void> _retrySocketConnection() async {
     _socketRetryAttempts++;
-    await Future.delayed(nextReconnectDelay(_socketRetryAttempts));
+    await Future.delayed(_nextReconnectDelay(_socketRetryAttempts));
     if (shouldEnableErrorLogging) {
       print('Retrying socket connection...');
     }
@@ -336,7 +336,7 @@ class MetricsConnection {
 
   Future<void> _retryRestConnection() async {
     _restRetryAttempts++;
-    await Future.delayed(nextReconnectDelay(_restRetryAttempts));
+    await Future.delayed(_nextReconnectDelay(_restRetryAttempts));
     if (shouldEnableErrorLogging) {
       print('Retrying REST connection...');
     }

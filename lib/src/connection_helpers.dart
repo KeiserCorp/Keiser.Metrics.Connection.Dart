@@ -15,7 +15,7 @@ int _cloudReconnectDelayMs(int attempt) {
   return delayMs.clamp(4000, _maxReconnectDelay.inMilliseconds);
 }
 
-Duration nextReconnectDelay(int reconnectAttempts) {
+Duration _nextReconnectDelay(int reconnectAttempts) {
   final capped = _cloudReconnectDelayMs(reconnectAttempts);
   final jittered = capped * (0.8 + _random.nextDouble() * 0.4);
   return Duration(milliseconds: jittered.round());
