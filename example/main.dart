@@ -24,8 +24,6 @@ void main() {
     _isAuthenticated = event == AuthenticationState.authenticated;
     _printStatus();
   });
-
-  connection.open();
 }
 
 void _printStatus() {
