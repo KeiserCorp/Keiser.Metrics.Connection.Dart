@@ -19,6 +19,7 @@ class MetricsConnection {
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
+    this.connectionReconnectDelay,
   }) {
     unawaited(_open());
   }
@@ -30,6 +31,7 @@ class MetricsConnection {
   final int requestRetryLimit;
   final Duration socketTimeout;
   final Duration socketMessageTimeout;
+  final Duration? connectionReconnectDelay;
   final bool shouldEnableErrorLogging;
 
   // internal
@@ -247,7 +249,9 @@ class MetricsConnection {
     }
     if (socket != null) {
       unawaited(
-        socket.sink.close(socket_status.normalClosure).catchError((Object _) {}),
+        socket.sink
+            .close(socket_status.normalClosure)
+            .catchError((Object _) {}),
       );
     }
   }
@@ -327,7 +331,9 @@ class MetricsConnection {
 
   Future<void> _retrySocketConnection() async {
     _socketRetryAttempts++;
-    await Future.delayed(_nextReconnectDelay(_socketRetryAttempts));
+    final delay =
+        connectionReconnectDelay ?? _nextReconnectDelay(_socketRetryAttempts);
+    await Future.delayed(delay);
     if (shouldEnableErrorLogging) {
       print('Retrying socket connection...');
     }
@@ -336,7 +342,9 @@ class MetricsConnection {
 
   Future<void> _retryRestConnection() async {
     _restRetryAttempts++;
-    await Future.delayed(_nextReconnectDelay(_restRetryAttempts));
+    final delay =
+        connectionReconnectDelay ?? _nextReconnectDelay(_restRetryAttempts);
+    await Future.delayed(delay);
     if (shouldEnableErrorLogging) {
       print('Retrying REST connection...');
     }
@@ -527,7 +535,8 @@ class MetricsConnection {
   /// re-pumps (see [_runQueued]), so the queue can never stall with budget
   /// free and items still waiting.
   void _dequeue() {
-    while (_requestQueue.isNotEmpty && _activeRequest < concurrentRequestLimit) {
+    while (
+        _requestQueue.isNotEmpty && _activeRequest < concurrentRequestLimit) {
       final request = _requestQueue.removeAt(0);
       _activeRequest++;
       _runQueued(request);
