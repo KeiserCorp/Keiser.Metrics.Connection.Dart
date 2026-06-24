@@ -41,6 +41,7 @@ class MetricsConnection {
   int _socketRetryAttempts = 0;
   int _restRetryAttempts = 0;
   bool _shouldRetrySocketConnection = true;
+  bool _isRestRetrying = false;
   bool _isDioAvailable = false;
   final List<RequestHandler> _requestQueue = [];
   final Map<int, Completer> _completers = {};
@@ -302,7 +303,13 @@ class MetricsConnection {
       return;
     }
     _closeRest();
-    _retryRestConnection();
+    // Single-flight: only one reconnect loop may run. Without this guard every
+    // concurrent request that hits a connection-class error spawns its own
+    // loop, all sharing `_restRetryAttempts` — the counter races up, the
+    // backoff tier escalates far faster than wall-clock warrants, and the
+    // loops tear down each other's freshly-built Dio. The running loop's own
+    // health-check failure re-enters here and is absorbed by the guard.
+    unawaited(_retryRestConnection());
   }
 
   Future<void> _onSocketError(error) async {
@@ -333,6 +340,10 @@ class MetricsConnection {
     _socketRetryAttempts++;
     final delay =
         connectionReconnectDelay ?? _nextReconnectDelay(_socketRetryAttempts);
+    if (shouldEnableErrorLogging) {
+      print(
+          'Socket Retry Attempt $_socketRetryAttempts, Delay: $delay, Date: ${DateTime.now().toUtc()}');
+    }
     await Future.delayed(delay);
     if (shouldEnableErrorLogging) {
       print('Retrying socket connection...');
@@ -341,14 +352,35 @@ class MetricsConnection {
   }
 
   Future<void> _retryRestConnection() async {
-    _restRetryAttempts++;
-    final delay =
-        connectionReconnectDelay ?? _nextReconnectDelay(_restRetryAttempts);
-    await Future.delayed(delay);
-    if (shouldEnableErrorLogging) {
-      print('Retrying REST connection...');
+    // Single self-contained loop. Re-entrant callers (each failing request)
+    // are absorbed here so only one backoff chain runs at a time.
+    if (_isRestRetrying) {
+      return;
     }
-    await _openRest();
+    _isRestRetrying = true;
+    try {
+      // Keep retrying while the connection is open, REST is down, and no
+      // socket is vouching for the server. `_openRest`'s health check on
+      // failure calls `_handleRestConnectionFailure` -> `_closeRest` (clears
+      // `_isDioAvailable`), so the loop condition stays true until a probe
+      // succeeds (Dio survives) or the socket reconnects.
+      while (_isOpen && !_isDioAvailable && !isSocketConnected) {
+        _restRetryAttempts++;
+        final delay =
+            connectionReconnectDelay ?? _nextReconnectDelay(_restRetryAttempts);
+        if (shouldEnableErrorLogging) {
+          print(
+              'Rest Retry Attempt $_restRetryAttempts, Delay: $delay, Date: ${DateTime.now()}');
+        }
+        await Future.delayed(delay);
+        if (shouldEnableErrorLogging) {
+          print('Retrying REST connection...');
+        }
+        await _openRest();
+      }
+    } finally {
+      _isRestRetrying = false;
+    }
   }
 
   void _setConnectionState(ConnectionState connectionState) {
