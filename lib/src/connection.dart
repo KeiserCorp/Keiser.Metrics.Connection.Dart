@@ -1,4 +1,4 @@
-part of keiser_metrics_connection;
+part of '../keiser_metrics_connection.dart';
 
 class MetricsConnection {
   /// Creates a new instance of [MetricsConnection].
@@ -10,7 +10,6 @@ class MetricsConnection {
   /// [concurrentRequestLimit] is the limit for concurrent requests.
   /// [requestRetryLimit] is the limit for request retries.
   /// [shouldEnableErrorLogging] is a flag indicating whether to enable error logging or not.
-  /// [socketRetryTimeout] is the timeout in milliseconds for socket retry attempts.
   MetricsConnection({
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
@@ -20,9 +19,9 @@ class MetricsConnection {
     this.concurrentRequestLimit = defaultConcurrentRequestLimit,
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
-    this.socketRetryTimeout,
+    this.connectionReconnectDelay,
   }) {
-    open();
+    unawaited(_open());
   }
   // params
   final String restEndpoint;
@@ -32,15 +31,17 @@ class MetricsConnection {
   final int requestRetryLimit;
   final Duration socketTimeout;
   final Duration socketMessageTimeout;
+  final Duration? connectionReconnectDelay;
   final bool shouldEnableErrorLogging;
-  final int? socketRetryTimeout;
 
   // internal
-  WebSocketChannel? _socket;
+  IOWebSocketChannel? _socket;
   Dio? _dio;
   int _lastMessageId = 0;
   int _socketRetryAttempts = 0;
+  int _restRetryAttempts = 0;
   bool _shouldRetrySocketConnection = true;
+  bool _isRestRetrying = false;
   bool _isDioAvailable = false;
   final List<RequestHandler> _requestQueue = [];
   final Map<int, Completer> _completers = {};
@@ -49,7 +50,10 @@ class MetricsConnection {
   String? _accessToken;
   String? _refreshToken;
   Timer? _accessTokenTimer;
+  Timer? _inactivityTimer;
+  Timer? _stabilityTimer;
   bool _isRefreshTokenInUse = false;
+  Completer<void>? _refreshCompleter;
   StreamSubscription? _socketSubscription;
 
   // state
@@ -100,16 +104,15 @@ class MetricsConnection {
       _accessToken != null ? decodeJwt(_accessToken!) : null;
 
   /// Opens the websocket and REST connections.
-  void open() {
+  Future<void> _open() async {
     if (_isOpen) {
       return;
     }
     _isOpen = true;
-    _openRest();
-
     if (shouldEnableWebSocket) {
-      _openSocket();
+      await _openSocket();
     }
+    await _openRest();
   }
 
   /// Closes the websocket and rest connections.
@@ -118,12 +121,34 @@ class MetricsConnection {
   /// be active. If you want to close & dispose of the instance, use the
   /// `dispose` method instead.
   void close() {
-    _isOpen = false;
     _shouldRetrySocketConnection = false;
     _closeSocket();
     _closeRest();
-    _drainPendingRequests();
+    // Tear down lifecycle timers unconditionally. `_setAuthStatus(unknown)`
+    // does NOT clear the access-token (keep-alive) timer — only the
+    // `unauthenticated` branch does — so cancel it here or it keeps firing
+    // requests against a closed connection.
+    _accessTokenTimer?.cancel();
+    _accessTokenTimer = null;
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
+    _stabilityTimer?.cancel();
+    _stabilityTimer = null;
+    // Reset backoff so a later reopen does not start deep in the delay curve.
+    _socketRetryAttempts = 0;
+    _restRetryAttempts = 0;
     _setAuthStatus(AuthenticationState.unknown);
+    _isOpen = false;
+  }
+
+  void _drainSocket() {
+    final error = UnexpectedError(message: 'Socket connection closed');
+    for (final completer in _completers.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    _completers.clear();
   }
 
   /// Error-completes every in-flight request so awaiters are released instead
@@ -131,13 +156,6 @@ class MetricsConnection {
   /// socket completers map and the queued REST/socket requests.
   void _drainPendingRequests() {
     final error = UnexpectedError(message: 'Connection closed');
-    for (final completer in _completers.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(error);
-      }
-    }
-    _completers.clear();
-
     for (final request in _requestQueue) {
       if (!request.completer.isCompleted) {
         request.completer.completeError(error);
@@ -151,16 +169,34 @@ class MetricsConnection {
     _setAuthStatus(AuthenticationState.unauthenticated);
   }
 
-  void _openSocket() async {
+  Future<void> _openSocket() async {
+    // A retry's delay may elapse after `close()`; never reopen a closed
+    // connection.
+    if (!_isOpen) {
+      return;
+    }
     if (isSocketConnected) {
-      _closeSocket();
+      return;
+    }
+    await _closeSocket();
+    if (shouldEnableErrorLogging) {
+      print('Opening socket');
     }
     _shouldRetrySocketConnection = true;
-    _socket = WebSocketChannel.connect(
+    _socket = IOWebSocketChannel.connect(
       Uri.parse(socketEndpoint),
+      connectTimeout: socketTimeout,
     );
     try {
-      await _socket!.ready.timeout(socketTimeout);
+      await _socket!.ready;
+      _resetInactivityTimer();
+      _setConnectionState(ConnectionState.connected);
+      _setServerStatus(ServerState.online);
+      // Do NOT reset the backoff on a bare handshake. A server that accepts
+      // the WS upgrade then immediately drops would otherwise reset the
+      // counter every cycle, pinning reconnects at the 1s floor forever.
+      // Only clear the backoff once the connection has proven stable.
+      _armStabilityReset();
       _socketSubscription = _socket!.stream.listen(
         _onSocketMessage,
         onError: _onSocketError,
@@ -170,20 +206,69 @@ class MetricsConnection {
       if (shouldEnableErrorLogging) {
         print(e);
       }
-      _requestServerHealth();
-      _onSocketDone();
+      // Detach recovery: a persistently failing handshake must not block
+      // `_open()` (which still has to bring REST up) nor chain the reconnect
+      // loop onto the caller's await. The retry runs in the background.
+      unawaited(_requestServerHealth());
+      unawaited(_onSocketDone());
     }
   }
 
-  void _closeSocket() {
-    _socketSubscription?.cancel();
-    _socketSubscription = null;
-    _socket?.sink.close(socket_status.normalClosure);
-    _socket = null;
-    _setConnectionState(ConnectionState.disconnected);
+  /// Resets the reconnect backoff only after the socket has stayed up for
+  /// [_socketStabilityWindow]. A connection that drops before the window
+  /// elapses leaves [_socketRetryAttempts] climbing, so a flapping server is
+  /// backed off instead of hammered.
+  void _armStabilityReset() {
+    _stabilityTimer?.cancel();
+    _stabilityTimer = Timer(_socketStabilityWindow, () {
+      _socketRetryAttempts = 0;
+    });
   }
 
-  void _openRest() {
+  Future<void> _closeSocket() async {
+    // Tear down state SYNCHRONOUSLY (null the socket, flip disconnected) before
+    // any await. The idempotency guard in `_onSocketDone` keys off
+    // `_socket == null && disconnected`; if we awaited first, a racing
+    // onError/onDone could observe the old non-null socket and spawn a second
+    // reconnect loop.
+    _stabilityTimer?.cancel();
+    _stabilityTimer = null;
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
+    final subscription = _socketSubscription;
+    final socket = _socket;
+    _socketSubscription = null;
+    _socket = null;
+    _setConnectionState(ConnectionState.disconnected);
+    _drainSocket();
+    // Fire-and-forget the underlying teardown. A channel whose handshake
+    // failed can leave `sink.close()` hanging forever; awaiting it here would
+    // stall the entire reconnect loop (callers await this method). Swallow
+    // errors — the socket is already gone as far as our state is concerned.
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    }
+    if (socket != null) {
+      unawaited(
+        socket.sink
+            .close(socket_status.normalClosure)
+            .catchError((Object _) {}),
+      );
+    }
+  }
+
+  Future<void> _resetInactivityTimer() async {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = Timer(const Duration(seconds: 75), () async {
+      if (shouldEnableErrorLogging) {
+        print('Socket inactivity timeout');
+      }
+      await _onSocketDone();
+      await _requestServerHealth();
+    });
+  }
+
+  Future<void> _openRest() async {
     _dio ??= Dio(
       BaseOptions(
         baseUrl: restEndpoint,
@@ -193,6 +278,10 @@ class MetricsConnection {
       ),
     );
     _isDioAvailable = true;
+    if (isSocketConnected) {
+      return;
+    }
+    await _requestServerHealth();
   }
 
   void _closeRest() {
@@ -200,6 +289,7 @@ class MetricsConnection {
     _isDioAvailable = false;
     _dio = null;
     _setServerStatus(ServerState.offline);
+    _drainPendingRequests();
   }
 
   /// A single REST request failing with a connection-class error must not
@@ -213,41 +303,84 @@ class MetricsConnection {
       return;
     }
     _closeRest();
+    // Single-flight: only one reconnect loop may run. Without this guard every
+    // concurrent request that hits a connection-class error spawns its own
+    // loop, all sharing `_restRetryAttempts` — the counter races up, the
+    // backoff tier escalates far faster than wall-clock warrants, and the
+    // loops tear down each other's freshly-built Dio. The running loop's own
+    // health-check failure re-enters here and is absorbed by the guard.
+    unawaited(_retryRestConnection());
   }
 
-  void _onSocketError(error) {
+  Future<void> _onSocketError(error) async {
     _setConnectionState(ConnectionState.disconnected);
+    await _onSocketDone();
     if (shouldEnableErrorLogging) {
       print('Socket Error: $error');
     }
   }
 
-  void _onSocketDone() {
-    _closeSocket();
+  Future<void> _onSocketDone() async {
+    // Idempotent teardown. The stream wires both onError and onDone, and the
+    // inactivity timer can race them — without this guard each would spawn its
+    // own retry loop, leaving orphaned sockets. Once torn down (socket null +
+    // disconnected) a duplicate callback is a no-op.
+    if (_socket == null &&
+        _socketConnectionState == ConnectionState.disconnected) {
+      return;
+    }
+    await _closeSocket();
 
     if (_shouldRetrySocketConnection) {
-      _retrySocketConnection();
+      await _retrySocketConnection();
     }
   }
 
-  void _retrySocketConnection() async {
-    int retryTimeout = 0;
-    if (_socketRetryAttempts > 3 && _socketRetryAttempts < 6) {
-      retryTimeout = 2000; // 6 seconds
-    } else if (_socketRetryAttempts >= 6 && _socketRetryAttempts < 20) {
-      retryTimeout = 30000; // 7 minutes
-    } else if (_socketRetryAttempts >= 20 && _socketRetryAttempts < 28) {
-      retryTimeout = 60000; // 8 minutes
-    } else if (_socketRetryAttempts >= 28) {
+  Future<void> _retrySocketConnection() async {
+    _socketRetryAttempts++;
+    final delay =
+        connectionReconnectDelay ?? _nextReconnectDelay(_socketRetryAttempts);
+    if (shouldEnableErrorLogging) {
+      print(
+          'Socket Retry Attempt $_socketRetryAttempts, Delay: $delay, Date: ${DateTime.now().toUtc()}');
+    }
+    await Future.delayed(delay);
+    if (shouldEnableErrorLogging) {
+      print('Retrying socket connection...');
+    }
+    await _openSocket();
+  }
+
+  Future<void> _retryRestConnection() async {
+    // Single self-contained loop. Re-entrant callers (each failing request)
+    // are absorbed here so only one backoff chain runs at a time.
+    if (_isRestRetrying) {
       return;
     }
-    if (socketRetryTimeout != null) {
-      retryTimeout = socketRetryTimeout!;
-    } else {
-      _socketRetryAttempts++;
+    _isRestRetrying = true;
+    try {
+      // Keep retrying while the connection is open, REST is down, and no
+      // socket is vouching for the server. `_openRest`'s health check on
+      // failure calls `_handleRestConnectionFailure` -> `_closeRest` (clears
+      // `_isDioAvailable`), so the loop condition stays true until a probe
+      // succeeds (Dio survives) or the socket reconnects.
+      while (_isOpen && !_isDioAvailable && !isSocketConnected) {
+        _restRetryAttempts++;
+        final delay =
+            connectionReconnectDelay ?? _nextReconnectDelay(_restRetryAttempts);
+        if (shouldEnableErrorLogging) {
+          print(
+              'Rest Retry Attempt $_restRetryAttempts, Delay: $delay, Date: ${DateTime.now()}');
+        }
+        await Future.delayed(delay);
+        if (shouldEnableErrorLogging) {
+          print('Retrying REST connection...');
+        }
+        await _openRest();
+      }
+    } finally {
+      _isRestRetrying = false;
     }
-    await Future.delayed(Duration(milliseconds: retryTimeout));
-    _openSocket();
   }
 
   void _setConnectionState(ConnectionState connectionState) {
@@ -255,16 +388,29 @@ class MetricsConnection {
       _setServerStatus(ServerState.online);
     }
 
+    // Only emit on an actual transition. Teardown paths (onError + onDone +
+    // inactivity timer) all flip to disconnected; without this guard consumers
+    // get a burst of duplicate events.
+    if (_socketConnectionState == connectionState) {
+      return;
+    }
     _socketConnectionState = connectionState;
-    _onConnectionChange.add(_socketConnectionState);
+    // `_closeSocket` is async and may settle after `dispose()` has closed the
+    // controllers; guard every emit so a late teardown never throws on a
+    // closed stream.
+    if (!_onConnectionChange.isClosed) {
+      _onConnectionChange.add(_socketConnectionState);
+    }
   }
 
   void _setServerStatus(ServerState status) {
     if (_serverStatus != status) {
       _serverStatus = status;
-      _onServerStatusChange.add(status);
-      if (status == ServerState.offline) {
-        close();
+      if (!_onServerStatusChange.isClosed) {
+        _onServerStatusChange.add(status);
+      }
+      if (_serverStatus == ServerState.online) {
+        _restRetryAttempts = 0;
       }
     }
   }
@@ -278,11 +424,14 @@ class MetricsConnection {
     }
     if (_authenticationStatus != status) {
       _authenticationStatus = status;
-      _onAuthenticationStatusChange.add(status);
+      if (!_onAuthenticationStatusChange.isClosed) {
+        _onAuthenticationStatusChange.add(status);
+      }
     }
   }
 
   void _onSocketMessage(dynamic data) {
+    _resetInactivityTimer();
     try {
       final parsedJson = jsonDecode(data);
       if (parsedJson is String) {
@@ -318,7 +467,7 @@ class MetricsConnection {
     _socket!.sink.add('"primus::pong::$time"');
   }
 
-  void _requestServerHealth() async {
+  Future<void> _requestServerHealth() async {
     try {
       await _enqueue(
         path: '/status',
@@ -363,7 +512,7 @@ class MetricsConnection {
               // still connected the server is reachable, so lazily rebuild
               // the REST client instead of declaring the server offline.
               if (isSocketConnected) {
-                _openRest();
+                await _openRest();
               } else {
                 _setServerStatus(ServerState.offline);
                 throw UnexpectedError(message: 'Internet or Server is offline');
@@ -412,11 +561,21 @@ class MetricsConnection {
     return response;
   }
 
-  void _dequeue() async {
-    if (_requestQueue.isEmpty) {
-      return;
+  /// Pumps queued requests into execution while there is concurrency budget.
+  /// Every request — first-attempt or queued — flows through here so the
+  /// [_activeRequest] counter is the single source of truth. Each completion
+  /// re-pumps (see [_runQueued]), so the queue can never stall with budget
+  /// free and items still waiting.
+  void _dequeue() {
+    while (
+        _requestQueue.isNotEmpty && _activeRequest < concurrentRequestLimit) {
+      final request = _requestQueue.removeAt(0);
+      _activeRequest++;
+      _runQueued(request);
     }
-    final request = _requestQueue.removeAt(0);
+  }
+
+  Future<void> _runQueued(RequestHandler request) async {
     try {
       final response = await _executeRequest(
           request.path,
@@ -429,6 +588,9 @@ class MetricsConnection {
       request.completer.complete(response);
     } catch (e) {
       request.completer.completeError(e);
+    } finally {
+      _activeRequest--;
+      _dequeue();
     }
   }
 
@@ -440,20 +602,9 @@ class MetricsConnection {
     Map<String, dynamic> queryParameters = const {},
     Map<String, dynamic> socketParameters = const {},
     Map<String, dynamic>? bodyParameters,
-  }) async {
-    if (_activeRequest < concurrentRequestLimit) {
-      _activeRequest++;
-      try {
-        final res = await _executeRequest(path, action, method, shouldRetry,
-            queryParameters, socketParameters, bodyParameters);
-        return res;
-      } finally {
-        _activeRequest--;
-        _dequeue();
-      }
-    }
+  }) {
     final completer = Completer<ResponseMessage>();
-    final requestHandler = RequestHandler(
+    _requestQueue.add(RequestHandler(
         completer: completer,
         path: path,
         action: action,
@@ -461,15 +612,16 @@ class MetricsConnection {
         params: queryParameters,
         socketParams: socketParameters,
         bodyParams: bodyParameters,
-        method: method);
-    _requestQueue.add(requestHandler);
-    final res = await completer.future;
-    return res;
+        method: method));
+    _dequeue();
+    return completer.future;
   }
 
   ResponseMessage _checkIfAuthenticated(ResponseMessage response) {
-    final data = response.data! as Map<String, dynamic>;
-    if (data['accessToken'] != null) {
+    // Runs for every response, so a non-map / null payload (lists, status
+    // bodies) must not crash. Only inspect maps that actually carry a token.
+    final data = response.data;
+    if (data is Map<String, dynamic> && data['accessToken'] != null) {
       _updateTokens(AuthenticatedResponse.fromMap(data));
       _setAuthStatus(AuthenticationState.authenticated);
     }
@@ -480,8 +632,7 @@ class MetricsConnection {
   Future<ResponseMessage> _actionSocket(
     String action,
     Map<String, dynamic> params,
-  ) async {
-    final completer = Completer<ResponseMessage>();
+  ) {
     _lastMessageId++;
     final messageId = _lastMessageId;
     final args = {
@@ -492,19 +643,38 @@ class MetricsConnection {
         ...params,
       },
     };
+    return _awaitSocketResponse(args, messageId, reconnectOnTimeout: true);
+  }
 
+  /// Sends a framed socket request and awaits its correlated response.
+  ///
+  /// Shared by [_actionSocket] and [sendChatRoomMessage]. When
+  /// [reconnectOnTimeout] is true (RPC actions) a timeout tears the socket down
+  /// and reconnects, then throws a retryable [TimeoutException] so the caller's
+  /// retry loop re-routes the request over REST. When false (fire-and-forget
+  /// chat) a timeout simply surfaces as an [UnexpectedError].
+  Future<ResponseMessage> _awaitSocketResponse(
+    Map<String, dynamic> args,
+    int messageId, {
+    required bool reconnectOnTimeout,
+  }) async {
+    final completer = Completer<ResponseMessage>();
     _completers[messageId] = completer;
     try {
       _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future.timeout(socketMessageTimeout);
-      return response;
+      return await completer.future.timeout(socketMessageTimeout);
     } on TimeoutException catch (_) {
-      if (_completers.containsKey(messageId)) {
-        _completers.remove(messageId);
+      _completers.remove(messageId);
+      if (reconnectOnTimeout) {
+        // Socket is unresponsive: tear it down + reconnect, and throw a
+        // retryable error so `_executeRequest`'s retry falls back to REST.
+        unawaited(_onSocketDone());
+        throw TimeoutException('Socket message timeout');
       }
       _setConnectionState(ConnectionState.disconnected);
       throw UnexpectedError(message: 'Socket message timeout');
     } catch (error) {
+      _completers.remove(messageId);
       if (error is Map<String, dynamic>) {
         throw MetricsApiError.fromMap(error);
       }
@@ -667,11 +837,41 @@ class MetricsConnection {
     } on MetricsApiError catch (error) {
       if (error.code == 616) {
         // 616 -> invalid token
-        if (_refreshToken != null) {
-          if (_isRefreshTokenInUse) {
+        if (_refreshToken == null) {
+          // invalid token and no refresh token
+          _setAuthStatus(AuthenticationState.unauthenticated);
+          rethrow;
+        }
+        if (_isRefreshTokenInUse) {
+          // A refresh is already in flight. Spending the refresh token a
+          // second time concurrently risks blacklisting it, so wait for the
+          // in-flight refresh and then retry this request with the freshly
+          // issued access token.
+          try {
+            await _refreshCompleter?.future;
+          } catch (_) {
+            // Refresh failed; the original 616 stands.
             rethrow;
           }
+          response = await _enqueue(
+            action: action,
+            queryParameters: {
+              'authorization': _accessToken,
+              ...queryParameters,
+            },
+            socketParameters: socketParameters,
+            bodyParameters: bodyParameters,
+            method: method,
+            path: path,
+          );
+        } else {
           _isRefreshTokenInUse = true;
+          final refreshCompleter = Completer<void>();
+          _refreshCompleter = refreshCompleter;
+          // The refresher reports failure to itself via `rethrow`; this guard
+          // stops the shared future from surfacing an unhandled async error
+          // when no concurrent request happens to be awaiting it.
+          refreshCompleter.future.ignore();
           try {
             response = await _enqueue(
               action: action,
@@ -679,25 +879,30 @@ class MetricsConnection {
                 'authorization': _refreshToken,
                 ...queryParameters,
               },
+              socketParameters: socketParameters,
+              bodyParameters: bodyParameters,
               method: method,
               path: path,
             );
+            // Publish the new access token before releasing waiters so their
+            // retry picks it up.
+            _checkIfAuthenticated(response);
+            refreshCompleter.complete();
           } on MetricsApiError catch (error) {
             if (error.code == 615 || error.code == 616) {
               // 615 -> blacklisted token
               // 616 -> invalid token
               _setAuthStatus(AuthenticationState.unauthenticated);
             }
+            refreshCompleter.completeError(error);
             rethrow;
-          } catch (_) {
+          } catch (e) {
+            refreshCompleter.completeError(e);
             rethrow;
           } finally {
             _isRefreshTokenInUse = false;
+            _refreshCompleter = null;
           }
-        } else {
-          // invalid token and no refresh token
-          _setAuthStatus(AuthenticationState.unauthenticated);
-          rethrow;
         }
       } else if (error.code == 615 ||
           (error.code == 613 && _accessToken == null)) {
@@ -718,8 +923,7 @@ class MetricsConnection {
   Future<ResponseMessage> sendChatRoomMessage({
     required String room,
     required Map<String, dynamic> params,
-  }) async {
-    final completer = Completer<ResponseMessage>();
+  }) {
     _lastMessageId++;
     final messageId = _lastMessageId;
     final args = {
@@ -731,23 +935,7 @@ class MetricsConnection {
         ...params,
       },
     };
-
-    _completers[messageId] = completer;
-    try {
-      _socket?.sink.add(jsonEncode(args));
-      final response = await completer.future.timeout(socketMessageTimeout);
-      return response;
-    } on TimeoutException catch (_) {
-      _completers.remove(messageId);
-      _setConnectionState(ConnectionState.disconnected);
-      throw UnexpectedError(message: 'Socket message timeout');
-    } catch (error) {
-      _completers.remove(messageId);
-      if (error is Map<String, dynamic>) {
-        throw MetricsApiError.fromMap(error);
-      }
-      throw UnexpectedError(message: error.toString());
-    }
+    return _awaitSocketResponse(args, messageId, reconnectOnTimeout: false);
   }
 
   /// Closes and disposes everything within the connection class.

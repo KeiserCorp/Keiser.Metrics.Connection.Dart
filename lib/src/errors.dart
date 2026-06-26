@@ -1,4 +1,4 @@
-part of keiser_metrics_connection;
+part of '../keiser_metrics_connection.dart';
 
 class MetricsApiError implements Exception {
   MetricsApiError({
@@ -54,9 +54,8 @@ class MetricsApiError implements Exception {
 }
 
 class UnexpectedError extends MetricsApiError {
-  UnexpectedError({required String message})
-      : super(
-            code: -1, status: 500, name: 'Unexpected Error', message: message);
+  UnexpectedError({required super.message})
+      : super(code: -1, status: 500, name: 'Unexpected Error');
 
   @override
   String toString() {

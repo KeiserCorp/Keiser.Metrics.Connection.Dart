@@ -1,4 +1,4 @@
-part of keiser_metrics_connection;
+part of '../keiser_metrics_connection.dart';
 
 enum WebsocketMessageContext { response, user }
 
@@ -15,3 +15,8 @@ const defaultSocketConnectionTimeout = Duration(seconds: 30);
 const defaultSocketMessageTimeout = Duration(seconds: 45);
 const defaultConcurrentRequestLimit = 5;
 const defaultRequestRetryLimit = 5;
+
+/// How long a websocket must stay connected before its successful connection
+/// clears the reconnect backoff. Guards against a server that accepts the
+/// handshake then immediately drops resetting the backoff every cycle.
+const _socketStabilityWindow = Duration(seconds: 10);
