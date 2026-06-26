@@ -1,4 +1,4 @@
-part of keiser_metrics_connection;
+part of '../keiser_metrics_connection.dart';
 
 AuthenticatedResponse authenticatedResponseFromMap(String str) =>
     AuthenticatedResponse.fromMap(json.decode(str));

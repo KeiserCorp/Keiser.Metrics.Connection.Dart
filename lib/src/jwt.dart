@@ -1,4 +1,4 @@
-part of keiser_metrics_connection;
+part of '../keiser_metrics_connection.dart';
 
 JWTToken decodeJwt(String token) {
   final jwtToken = JwtDecoder.decode(token);
