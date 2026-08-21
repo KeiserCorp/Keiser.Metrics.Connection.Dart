@@ -22,7 +22,7 @@ class MetricsConnection {
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
     this.connectionReconnectDelay,
-    this.keepAliveRenewalBuffer = defaultKeepAliveRenewalBuffer,
+    this.keepAliveRenewalBuffer,
   }) {
     unawaited(_open());
   }
@@ -36,7 +36,7 @@ class MetricsConnection {
   final Duration socketMessageTimeout;
   final Duration? connectionReconnectDelay;
   final bool shouldEnableErrorLogging;
-  final Duration keepAliveRenewalBuffer;
+  final Duration? keepAliveRenewalBuffer;
 
   // internal
   IOWebSocketChannel? _socket;
@@ -762,9 +762,10 @@ class MetricsConnection {
       _accessTokenTimer!.cancel();
     }
     if (decodedAccesstoken!.exp != null) {
+      final buffer = keepAliveRenewalBuffer ?? defaultKeepAliveRenewalBuffer;
       final tokenTTL = (decodedAccesstoken!.exp! * 1000) -
           DateTime.now().millisecondsSinceEpoch -
-          keepAliveRenewalBuffer.inMilliseconds;
+          buffer.inMilliseconds;
       final renewalDelay = tokenTTL < 0 ? 0 : tokenTTL;
       _accessTokenTimer =
           Timer(Duration(milliseconds: renewalDelay), _keepAlive);
