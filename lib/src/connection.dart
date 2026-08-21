@@ -10,6 +10,8 @@ class MetricsConnection {
   /// [concurrentRequestLimit] is the limit for concurrent requests.
   /// [requestRetryLimit] is the limit for request retries.
   /// [shouldEnableErrorLogging] is a flag indicating whether to enable error logging or not.
+  /// [keepAliveRenewalBuffer] is how long before access-token expiration the
+  /// keep-alive renewal fires. Defaults to 5 seconds.
   MetricsConnection({
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
@@ -20,6 +22,7 @@ class MetricsConnection {
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
     this.connectionReconnectDelay,
+    this.keepAliveRenewalBuffer = defaultKeepAliveRenewalBuffer,
   }) {
     unawaited(_open());
   }
@@ -33,6 +36,7 @@ class MetricsConnection {
   final Duration socketMessageTimeout;
   final Duration? connectionReconnectDelay;
   final bool shouldEnableErrorLogging;
+  final Duration keepAliveRenewalBuffer;
 
   // internal
   IOWebSocketChannel? _socket;
@@ -758,10 +762,12 @@ class MetricsConnection {
       _accessTokenTimer!.cancel();
     }
     if (decodedAccesstoken!.exp != null) {
-      final tokenTTL = decodedAccesstoken!.exp! * 1000 -
+      final tokenTTL = (decodedAccesstoken!.exp! * 1000) -
           DateTime.now().millisecondsSinceEpoch -
-          jwtTTLLimit;
-      _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
+          keepAliveRenewalBuffer.inMilliseconds;
+      final renewalDelay = tokenTTL < 0 ? 0 : tokenTTL;
+      _accessTokenTimer =
+          Timer(Duration(milliseconds: renewalDelay), _keepAlive);
     }
 
     if (authenticatedResponse.refreshToken != null) {
