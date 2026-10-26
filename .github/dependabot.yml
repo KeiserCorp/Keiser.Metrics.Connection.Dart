@@ -1,0 +1,48 @@
+# Dependabot configuration — SOC 2 Type 2 patch management program.
+# Organization standard: weekly on Monday 06:00 America/Los_Angeles,
+# labels "dependencies" + ecosystem, commit prefix "deps", 10 open PRs per ecosystem,
+# minor/patch grouped, majors as separate PRs.
+#
+# Reviewer assignment (ish2028) lives in .github/CODEOWNERS: GitHub removed the
+# `reviewers` key from dependabot.yml on 2025-05-20 in favor of code owners.
+#
+# Not covered on purpose: none (no submodules; no npm or Docker manifests in this repo).
+version: 2
+updates:
+  - package-ecosystem: "pub"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    labels:
+      - "dependencies"
+      - "pub"
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 10
+    groups:
+      pub-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 10
+    groups:
+      github-actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
