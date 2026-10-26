@@ -1,0 +1,8 @@
+# Dependabot reviewer assignment (SOC 2 Type 2 patch management program).
+# GitHub removed the dependabot.yml `reviewers` key on 2025-05-20; code owners
+# are the official replacement. Entries are scoped only to the paths Dependabot
+# edits. Do not add a catch-all `*` rule here.
+/pubspec.yaml            @ish2028
+/pubspec.lock            @ish2028
+/.github/workflows/      @ish2028
+/.github/dependabot.yml  @ish2028

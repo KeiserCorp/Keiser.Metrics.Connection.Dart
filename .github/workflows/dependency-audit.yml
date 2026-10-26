@@ -1,0 +1,46 @@
+# Dependency audit — SOC 2 Type 2 patch management program.
+# Fails the pull request when a High or Critical vulnerability is found
+# (CVSS score >= 7.0, or advisory severity label HIGH or CRITICAL).
+#
+# Ecosystems in this repo:
+#   - Dart (pub): scanned with OSV-Scanner. pubspec.lock is gitignored (library
+#     package convention), so the lockfile is resolved with `dart pub get` at
+#     scan time rather than read from git.
+# Ecosystems skipped because they do not exist in this repo:
+#   - Node.js (npm audit): no package.json
+#   - Docker: no Dockerfile or compose file
+name: Dependency audit
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  osv-scanner-pub:
+    name: OSV-Scanner (pub)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+
+      - name: Resolve lockfile
+        run: dart pub get
+
+      # Exit code 1 means vulnerabilities were found; the gate step below decides
+      # pass/fail from the report, so the scanner step itself must not stop the job.
+      - name: Run OSV-Scanner
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+        with:
+          scan-args: |-
+            --format=json
+            --output-file=osv-results.json
+            --lockfile=pubspec.lock
+
+      - name: Gate on High/Critical findings
+        run: .github/scripts/osv-gate.sh osv-results.json
