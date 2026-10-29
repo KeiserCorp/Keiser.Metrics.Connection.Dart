@@ -16,6 +16,14 @@ const defaultSocketMessageTimeout = Duration(seconds: 45);
 const defaultConcurrentRequestLimit = 5;
 const defaultRequestRetryLimit = 5;
 
+/// How long before access-token expiration the keep-alive renewal fires.
+const defaultKeepAliveRenewalBuffer = Duration(seconds: 5);
+
+const minKeepAliveRenewalBuffer = Duration(seconds: 5);
+const maxKeepAliveRenewalBuffer = Duration(minutes: 3);
+
+const _keepAliveRetryDelay = Duration(seconds: 30);
+
 /// How long a websocket must stay connected before its successful connection
 /// clears the reconnect backoff. Guards against a server that accepts the
 /// handshake then immediately drops resetting the backoff every cycle.
