@@ -1,7 +1,12 @@
-# Dependabot configuration — SOC 2 Type 2 patch management program.
-# Organization standard: weekly on Monday 06:00 America/Los_Angeles,
-# labels "dependencies" + ecosystem, commit prefix "deps", 10 open PRs per ecosystem,
-# minor/patch grouped, majors as separate PRs.
+# Dependabot configuration — security updates only (SOC 2 Type 2 patch management).
+#
+# Every entry sets open-pull-requests-limit: 0, which disables version-update PRs
+# (routine bumps) while Dependabot security updates keep opening one PR per
+# Dependabot alert that has a fix. Security-update PRs reuse each entry's labels
+# and commit-message prefix. Routine dependency upgrades are done by hand.
+#
+# Requires repo settings: Dependabot alerts and Dependabot security updates
+# (Settings > Code security) both enabled.
 #
 # Reviewer assignment (ish2028) lives in .github/CODEOWNERS: GitHub removed the
 # `reviewers` key from dependabot.yml on 2025-05-20 in favor of code owners.
@@ -21,12 +26,7 @@ updates:
       - "pub"
     commit-message:
       prefix: "deps"
-    open-pull-requests-limit: 10
-    groups:
-      pub-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -40,9 +40,4 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "deps"
-    open-pull-requests-limit: 10
-    groups:
-      github-actions-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+    open-pull-requests-limit: 0

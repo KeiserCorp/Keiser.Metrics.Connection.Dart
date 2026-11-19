@@ -1,0 +1,60 @@
+# Required PR check - SOC 2 change management (KSR-ISMS-063). The org ruleset requires the status check named exactly build-and-test. Do not rename the gate job or add a matrix to it.
+name: build-and-test
+
+on:
+  pull_request:
+    branches:
+      - main
+      - development
+      - "v*" # version branches: v2.0.0, ...
+      - "release/*" # staging fixes are PR'd into the release branch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - run: dart pub get
+      - run: dart analyze
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - run: dart pub get
+      # Offline tests only (local HTTP/WS servers). keiser_metrics_connection_test.dart
+      # hits a live server with secrets and stays in development.yml.
+      - run: |
+          shopt -s extglob
+          dart test -r github test/!(keiser_metrics_connection)_test.dart
+
+  build-and-test:
+    name: build-and-test
+    needs: [analyze, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")' > /dev/null
