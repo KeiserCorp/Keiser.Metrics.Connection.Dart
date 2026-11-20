@@ -10,6 +10,9 @@ class MetricsConnection {
   /// [concurrentRequestLimit] is the limit for concurrent requests.
   /// [requestRetryLimit] is the limit for request retries.
   /// [shouldEnableErrorLogging] is a flag indicating whether to enable error logging or not.
+  /// [keepAliveRenewalBuffer] is how long before access-token expiration the
+  /// keep-alive renewal fires. Defaults to 5 seconds. Must be between
+  /// [minKeepAliveRenewalBuffer] and [maxKeepAliveRenewalBuffer].
   MetricsConnection({
     this.restEndpoint = defaultRestEndpoint,
     this.socketEndpoint = defaultSocketEndpoint,
@@ -20,7 +23,13 @@ class MetricsConnection {
     this.requestRetryLimit = defaultRequestRetryLimit,
     this.shouldEnableErrorLogging = false,
     this.connectionReconnectDelay,
-  }) {
+    this.keepAliveRenewalBuffer = defaultKeepAliveRenewalBuffer,
+  }) : assert(
+          keepAliveRenewalBuffer >= minKeepAliveRenewalBuffer &&
+              keepAliveRenewalBuffer <= maxKeepAliveRenewalBuffer,
+          'keepAliveRenewalBuffer must be between $minKeepAliveRenewalBuffer '
+          'and $maxKeepAliveRenewalBuffer',
+        ) {
     unawaited(_open());
   }
   // params
@@ -33,6 +42,7 @@ class MetricsConnection {
   final Duration socketMessageTimeout;
   final Duration? connectionReconnectDelay;
   final bool shouldEnableErrorLogging;
+  final Duration keepAliveRenewalBuffer;
 
   // internal
   IOWebSocketChannel? _socket;
@@ -758,10 +768,17 @@ class MetricsConnection {
       _accessTokenTimer!.cancel();
     }
     if (decodedAccesstoken!.exp != null) {
-      final tokenTTL = decodedAccesstoken!.exp! * 1000 -
+      final buffer = keepAliveRenewalBuffer < minKeepAliveRenewalBuffer
+          ? minKeepAliveRenewalBuffer
+          : keepAliveRenewalBuffer > maxKeepAliveRenewalBuffer
+              ? maxKeepAliveRenewalBuffer
+              : keepAliveRenewalBuffer;
+      final tokenTTL = (decodedAccesstoken!.exp! * 1000) -
           DateTime.now().millisecondsSinceEpoch -
-          jwtTTLLimit;
-      _accessTokenTimer = Timer(Duration(milliseconds: tokenTTL), _keepAlive);
+          buffer.inMilliseconds;
+      final renewalDelay = tokenTTL < 0 ? 0 : tokenTTL;
+      _accessTokenTimer =
+          Timer(Duration(milliseconds: renewalDelay), _keepAlive);
     }
 
     if (authenticatedResponse.refreshToken != null) {
@@ -783,6 +800,10 @@ class MetricsConnection {
     } catch (_) {
       if (shouldThrow) {
         rethrow;
+      }
+      if (_isOpen && _accessToken != null) {
+        _accessTokenTimer?.cancel();
+        _accessTokenTimer = Timer(_keepAliveRetryDelay, _keepAlive);
       }
     }
   }

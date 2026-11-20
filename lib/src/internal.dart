@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:keiser_metrics_connection/keiser_metrics_connection.dart';
 
-const jwtTTLLimit = 5000;
 final pingRegex = RegExp("^primus::ping::(\\d{13})\$");
 
 class RequestHandler {
