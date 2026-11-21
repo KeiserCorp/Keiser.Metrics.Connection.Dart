@@ -269,6 +269,11 @@ class MetricsConnection {
   }
 
   Future<void> _openRest() async {
+    // A retry's delay may elapse after `close()`; never reopen a closed
+    // connection.
+    if (!_isOpen) {
+      return;
+    }
     _dio ??= Dio(
       BaseOptions(
         baseUrl: restEndpoint,
